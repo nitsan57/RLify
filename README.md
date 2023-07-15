@@ -8,8 +8,6 @@
 
 ##### Main features:
 
-Easy to use supports dict as observations.
-
 Currently supports the algorithms:
 
 PPO
@@ -17,8 +15,6 @@ PPO
 DDQN
 
 =============
-
-Main features:
 
 Easy to use on environments that impliments gymnasium api
 
@@ -28,7 +24,11 @@ Easy to add own NN models, including Reccurent models which is supported by our 
 
 you are able to overide agent intrinsic reward with a simple api. (agent.set_intrisic_reward_func)
 
+Easy to use supports dict as observations.
+
 and many more!
+
+---
 
 [WIP]
 
