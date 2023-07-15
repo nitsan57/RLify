@@ -1,18 +1,20 @@
 # RL Kit
 
-An RL framework:
+### An RL framework:
+
+##### Check rlkit.py for usage examples!
+
+---
+
+##### Main features:
 
 Easy to use supports dict as observations.
 
-Currently supports:
-
-Check rlkit.ipynb notebook for uasge examples
+Currently supports the algorithms:
 
 PPO
 
 DDQN
-
-checkout some examples in rlkit notebook
 
 =============
 
