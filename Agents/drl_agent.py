@@ -220,8 +220,8 @@ class RL_Agent(ABC):
     def _train_n_iters(self, env, n_iters, episodes=False, max_episode_len=None, disable_tqdm=False):
         """General train function, if episodes is true- each iter is episode, otherwise train steps"""
         self.set_train_mode()
-
-        pbar = tqdm(total=n_iters, leave=False, disable=disable_tqdm)
+        
+        pbar = tqdm(total=n_iters, leave=None, disable=disable_tqdm)
         curr_training_steps = 0
         train_rewards = []
 
