@@ -1,35 +1,33 @@
 # RL Kit
 
-### An RL framework:
+RL Kit is a robust and flexible Reinforcement Learning (RL) framework. It provides a rich set of features to facilitate the development, training, and deployment of RL algorithms.
 
-##### Check rlkit.py for usage examples!
+## Usage
 
----
+For usage examples, please check `rlkit.py`.
 
-##### Main features:
+## Features
 
-Currently supports the algorithms:
+- **Algorithm Support**: Currently, RL Kit supports the following algorithms:
 
-PPO
+  - Proximal Policy Optimization (PPO)
+  - Deep Q-Network (DDQN)
+- **Gym API Compatibility**: RL Kit is designed to work seamlessly with environments that implement the OpenAI Gym API.
+- **Customizable Agents**: You can create and extend your own agent by overriding certain functions.
+- **Neural Network Flexibility**: It's straightforward to integrate your own neural network models, including recurrent models. RL Kit's agent implementations fully support these.
+- **Customizable Intrinsic Reward**: Overriding agent's intrinsic reward is as simple as using `agent.set_intrinsic_reward_func()`.
+- **Observation Flexibility**: RL Kit supports dictionary format for observations.
 
-DDQN
+And many more features!
 
-=============
+## Work in Progress
 
-Easy to use on environments that impliments gymnasium api
+- Adding support for callbacks.
 
-you are able to create and extend your own agent with some functions overide
+## Contributions
 
-Easy to add own NN models, including Reccurent models which is supported by our implimented agents.
+We welcome contributions! If you're interested in enhancing the features, fixing bugs, or adding new RL algorithms, feel free to open a pull request or issue.
 
-you are able to overide agent intrinsic reward with a simple api. (agent.set_intrisic_reward_func)
+## License
 
-Easy to use supports dict as observations.
-
-and many more!
-
----
-
-[WIP]
-
-Add support for callbacks
+RL Kit is MIT licensed.
