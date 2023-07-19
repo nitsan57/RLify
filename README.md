@@ -4,7 +4,7 @@ RL Kit is a robust and flexible Reinforcement Learning (RL) framework. It provid
 
 ## Usage
 
-For usage examples, please check `rlkit.py`.
+For usage examples, please check `rlkit.ipynb`.
 
 ## Features
 
