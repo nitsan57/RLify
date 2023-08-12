@@ -4,7 +4,7 @@ RL Kit is a robust and flexible Reinforcement Learning (RL) framework. It provid
 
 ## Usage
 
-For usage examples, please check `rlkit.ipynb`.
+For usage examples, please check `getting-started.ipynb`.
 
 ## Features
 
@@ -16,13 +16,14 @@ For usage examples, please check `rlkit.ipynb`.
 - **Customizable Agents**: You can create and extend your own agent by overriding certain functions.
 - **Neural Network Flexibility**: It's straightforward to integrate your own neural network models, including recurrent models. RL Kit's agent implementations fully support these.
 - **Customizable Intrinsic Reward**: Overriding agent's intrinsic reward is as simple as using `agent.set_intrinsic_reward_func()`.
+- **Override Exploration Method Using heuristic functions**: Overriding exploration method from random choice to some user inputed heurstic to speed up train in certein env `HeuristicExplorer()`.
 - **Observation Flexibility**: RL Kit supports dictionary format for observations.
 
 And many more features!
 
 ## Work in Progress
 
-- Adding support for callbacks.
+- Adding support for callbacks.git
 
 ## Contributions
 

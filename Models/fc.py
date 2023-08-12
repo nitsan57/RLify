@@ -20,14 +20,14 @@ class FC(AbstractModel):
         self.l2 = nn.Linear(embed_dim, out_shape)
     
 
-    def forward(self, x):
+    def forward(self, x, d=None): # d is for rnn api compability
         # temp_k = list(x.keys())[0]
         # device = x[temp_k].data.get_device()
 
         res_dict = dict()
         for k in x:
             layer = self.l1[k]
-            normed = (x[k] - self.mean_in_params[k])/(self.std_in_params[k] + 1e-3)
+            normed = (x[k] - self.mean_in_params[k])/torch.abs((self.std_in_params[k]) + 1e-3)
             layer_in = torch.flatten(normed, start_dim=1)
             out = layer(layer_in)
             res_dict[k] = out

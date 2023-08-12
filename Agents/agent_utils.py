@@ -5,210 +5,29 @@ import torch
 import copy
 import gc
 import gymnasium as gym
-from torch.distributions import Normal
 
 
-class LinearRandomExplorer():
-    """Class that acts a linear exploration method"""
-    def __init__(self, exploration_epsilon=1, eps_end=0.05, eps_dec=1e-2) -> None:
-        self.exploration_epsilon = exploration_epsilon
-        self.eps_end = eps_end
-        self.eps_dec = eps_dec
-
-
-    def explore(self):
-        if np.random.random() < self.exploration_epsilon:
-            return True
-        return False
-
-    def update(self):
-        self.exploration_epsilon = self.exploration_epsilon * (1-self.eps_dec) if self.exploration_epsilon > self.eps_end else self.eps_end
-
-
-class MCAW():
-    def __init__(self, low, high, locs_scales_tesnor) -> None:
-        num_models = len(low)
-        self.continuous_models = []
-        self.out_shape = locs_scales_tesnor.shape[0], num_models # sample or get locs
-        self.device = locs_scales_tesnor.device
-        mu_dims = np.arange(num_models)
-        sigma_dims = np.arange(num_models, 2*num_models) 
-        for i in range(num_models):
-            model = CAW(low[i], high[i], locs_scales_tesnor[:, mu_dims[i]],locs_scales_tesnor[:,sigma_dims[i]])
-            self.continuous_models.append(model)
-            
-
-    def sample(self, sample_shape=torch.Size()):
-        res = torch.zeros(self.out_shape, device=self.device)
-        for i,m in enumerate(self.continuous_models):
-            res[:,i] = m.sample(sample_shape)
-        return res
-    
-    
-    def log_prob(self, actions):
-        res = torch.zeros(self.out_shape, device=self.device)
-
-        for i,m in enumerate(self.continuous_models):
-            res[:,i] = m.log_prob(actions[:, i])
-            
-        return res
-    
-
-    def get_scales(self):
-        res = torch.zeros(self.out_shape, device=self.device)
-        for i,m in enumerate(self.continuous_models):
-            res[:,i] = m.loc
-        return res
-
-    def get_locs(self):
-        res = torch.zeros(self.out_shape)
-        for i,m in enumerate(self.continuous_models):
-            res[:,i] = m.scale
-        return res
-    
-    def entropy(self):
-        res = torch.zeros(self.out_shape)
-        for i,m in enumerate(self.continuous_models):
-            res[:,i] = m.entropy()
-        return res.mean(1)
-
-        
-class CAW(Normal):
-    def __init__(self, low, high, loc, scale) -> None:
-        low, high = float(low), float(high)
-        self.low = low
-        self.high = high
-        coeff = (high - low) / 2
-        bias = low + coeff
-        loc = torch.tanh(4*loc)*coeff+bias
-        scale = torch.nn.Softplus()(scale)
-        super().__init__(loc, scale)
-        self.activation = torch.nn.Identity() #torch.nn.Sigmoid()
-
-
-    def sample(self, sample_shape=torch.Size()):
-        return torch.clamp(self.activation(super().sample(sample_shape)), self.low, self.high)
-    
-    def get_scales(self):
-        return self.scale
-
-    def get_locs(self):
-        return self.loc
-
-
-def calc_returns(rewards, dones, discount_factor, horizon=10):
-    """works with rewards vector which consitst of many epidsodes"""
-    curr = 0
-    device = rewards.device
-    returns = torch.zeros_like(rewards, device=device)
-    curr= rewards[-1]
-    returns[-1] = rewards[-1]
-
-    curr_discount_value = discount_factor
-    norm_param = 1
-    for reveres_idx in reversed(range(len(rewards)-1)):
-        r = rewards[reveres_idx]
-        if dones[reveres_idx]:
-            norm_param = 1
-            curr_discount_value = discount_factor
-        
-
-        curr = r + discount_factor * curr*(1-dones[reveres_idx])
-        norm_param += curr_discount_value
-        curr_discount_value *=discount_factor
-
-        returns[reveres_idx] = curr #/norm_param  # append in revers e
-    
-    return returns
-
-
-def calc_returns_fixed_horizon(rewards, dones, discount_factor, horizon=20):
-    """works with rewards vector which consitst of many epidsodes"""
-    norm_param = discount_factor * horizon
-    curr = 0
-    device = rewards.device
-    returns = torch.zeros_like(rewards, device=device)
-    horizoned_returns = torch.zeros_like(returns, device=device)
-    
-
-    curr= rewards[-1]
-    curr_done_idx = len(dones)-1
-    returns[-1] = rewards[-1]
-    horizoned_returns[-1] = rewards[-1]
-
-    for reveres_idx in reversed(range(len(rewards)-1)):
-        r = rewards[reveres_idx]
-        curr_done_idx = reveres_idx if dones[reveres_idx] else curr_done_idx
-        curr = r + discount_factor * curr*(1-dones[reveres_idx])
-
-
-        returns[reveres_idx] = curr  # append in reverse
-        horizoned_returns[reveres_idx] = returns[reveres_idx]
-        if (reveres_idx + horizon) <= curr_done_idx: #len(returns):
-            horizoned_returns[reveres_idx]-=returns[reveres_idx + horizon]
-            horizoned_returns[reveres_idx] /=norm_param
-        else:
-            portion = (reveres_idx + horizon-1 - curr_done_idx)  / horizon
-            if portion ==1:
-                portion = 1-1/(norm_param)
-            horizoned_returns[reveres_idx] = horizoned_returns[reveres_idx]/(norm_param*(1-portion))
-        
-            # horizoned_returns[reveres_idx] = horizoned_returns[reveres_idx]/norm_param
-        # else:
-            # horizoned_returns[reveres_idx] = horizoned_returns[reveres_idx]/norm_param
-    
-    return horizoned_returns
-
-
-def fixed_horizon_gaes(rewards, values, dones, discount_factor=1, decay=0.9, horizon=20):
+def calc_gaes(rewards, values, terminated, discount_factor=0.99, decay=0.9):
     """
     works with rewards vector which consitst of many epidsodes
     Return the General Advantage Estimates from the given rewards and values.
     Paper: https://arxiv.org/pdf/1506.02438.pdf
     """
-    
-    gamma = discount_factor
-    curr_done_idx = len(dones)-1
     device = rewards.device
 
     next_values = torch.cat([values[1:], torch.zeros(1, device=device)])
-    # deltas = [rew + gamma * next_val - val for rew, val, next_val in zip(rewards, values, next_values)]
-    deltas = rewards + gamma * next_values * (1 - dones) - values
-    gaes = torch.zeros_like(deltas, device=device)
-    horizoned_gaes = torch.zeros_like(deltas, device=device)
-    gaes[-1] = deltas[-1]
-    horizoned_gaes[-1] = deltas[-1]
 
-    for i in reversed(range(len(deltas)-1)):        
-        curr_done_idx = i if dones[i] else curr_done_idx
-        gaes[i] = deltas[i] + gamma * decay * gaes[i+1] * (1 - dones[i])
-        horizoned_gaes[i] = gaes[i] 
-        if i + horizon < curr_done_idx:
-            horizoned_gaes[i]-=gaes[i + horizon]
-
-
-    return horizoned_gaes
-
-
-def calc_gaes(rewards, values, dones, discount_factor=0.99, decay=0.95, horizon=-1):
-    """
-    works with rewards vector which consitst of many epidsodes
-    Return the General Advantage Estimates from the given rewards and values.
-    Paper: https://arxiv.org/pdf/1506.02438.pdf
-    """
-    gamma = discount_factor
-    device = rewards.device
-
-    next_values = torch.cat([values[1:], torch.zeros(1, device=device)])
-    # deltas = [rew + gamma * next_val - val for rew, val, next_val in zip(rewards, values, next_values)]
-    deltas = rewards - values + gamma * next_values * (1 - dones) 
+    td = rewards + discount_factor * (next_values)*(1 - terminated)
+    deltas = td - values
 
     gaes = torch.zeros_like(deltas, device=device)
-    gaes[-1] = deltas[-1]
+    gaes[-1] = rewards[-1]
 
-    for i in reversed(range(len(deltas)-1)):
-        gaes[i] = deltas[i] + gamma * decay * gaes[i+1] * (1 - dones[i])
-    return gaes
+    for i in reversed(range(len(deltas) -1)):
+        gaes[i] = deltas[i] + discount_factor * decay * gaes[i+1] * (1 - terminated[i])
+        # warmup_td[i] = rewards[i] + discount_factor * warmup_td[i+1] * (1 - terminated[i])
+        
+    return gaes, td
 
 
 class ObsShapeWraper(dict):
@@ -542,11 +361,10 @@ class ExperienceReplay:
         return self.curr_size
 
 
-    def append(self, curr_obs, action, reward, done, truncated, next_obs):
+    def append(self, curr_obs, action, reward, done, truncated):
         # extra_exps
 
         curr_obs = ObsWraper(curr_obs)
-        next_obs = ObsWraper(next_obs)
         
         num_samples = len(curr_obs)
 
@@ -558,8 +376,6 @@ class ExperienceReplay:
             reward = reward[:self.capacity]
             done = done[:self.capacity]
             truncated = truncated[:self.capacity]
-            next_obs = next_obs[:self.capacity]
-
             done[-1] = True
             truncated[-1] = True
             num_samples = self.capacity
@@ -571,15 +387,12 @@ class ExperienceReplay:
 
             relevant_index = relevant_dones[len(relevant_dones)//2]
             done_index = dones[relevant_index]
-
             for i in range(len(self.all_buffers)):
-                # self.all_buffers[i][:done_index+1] = 0
-                if i == self.states_index or i == self.next_states_index:
+                if i == self.states_index:
                     self.all_buffers[i] = self.all_buffers[i].np_zero_roll(-done_index - 1, axis=0, inplace=False)
                 else:
                     self.all_buffers[i] = np.concatenate([self.all_buffers[i][-(-done_index-1):], np.zeros_like(self.all_buffers[i][:-(-done_index-1)])]) # np.roll(self.all_buffers[i], -done_index - 1, axis=0)
             
-
             self.curr_size -= (done_index+1)
 
         self.all_buffers[self.states_index][self.curr_size:self.curr_size + num_samples] = curr_obs
@@ -587,8 +400,6 @@ class ExperienceReplay:
         self.all_buffers[self.reward_index][self.curr_size:self.curr_size + num_samples] = reward
         self.all_buffers[self.dones_index][self.curr_size:self.curr_size + num_samples] = done
         self.all_buffers[self.truncated_index][self.curr_size:self.curr_size + num_samples] = truncated
-        self.all_buffers[self.next_states_index][self.curr_size: self.curr_size+num_samples] = next_obs
-    
 
         self.curr_size += num_samples
 
@@ -603,21 +414,18 @@ class ExperienceReplay:
         shape = (self.capacity, *self.obs_shape)
 
         states_buffer = ObsWraper()
-        next_states_buffer = ObsWraper()
         for k in self.obs_shape:
             shape = (self.capacity, *self.obs_shape[k])
             states_buffer[k] = np.zeros(shape, dtype=np.float32)
-            next_states_buffer[k] = np.zeros(shape, dtype=np.float32)
 
         self.all_buffers = [states_buffer, actions_buffer,
-                            reward_buffer, dones_buffer, truncated_buffer, next_states_buffer]
+                            reward_buffer, dones_buffer, truncated_buffer]
 
         self.states_index = 0
         self.actions_index = 1
         self.reward_index = 2
         self.dones_index = 3
         self.truncated_index = 4
-        self.next_states_index = 5
 
 
     def clear(self):
@@ -663,12 +471,20 @@ class ExperienceReplay:
             last_samples = [buff[self.curr_size-num_samples:self.curr_size]
                             for buff in self.all_buffers]
 
-
+        # Add next_obs:
+        last_samples.append(self.all_buffers[self.states_index].np_zero_roll(1, axis=0, inplace=False))
         return last_samples
+
+    def get_all_buffers(self):
+        buffers = copy.deepcopy(self.all_buffers)
+        next_obs = buffers[self.states_index].np_zero_roll(1, axis=0, inplace=False)
+        buffers.append(next_obs)
+        return buffers
 
 
     def get_buffers_at(self, indices):
-        buffers_at = tuple(buff[indices] for buff in self.all_buffers)
+        buffers = self.get_all_buffers()
+        buffers_at = tuple(buff[indices] for buff in buffers)
         return buffers_at
 
 
@@ -689,10 +505,9 @@ class ExperienceReplayBeta(ExperienceReplay):
         super().init_buffers()
 
 
-    def append(self, curr_obs, action, reward, done, truncated, next_obs):
+    def append(self, curr_obs, action, reward, done, truncated):
         self.num_episodes_added = sum(done)
         curr_obs = curr_obs
-        next_obs = next_obs
 
         num_samples = len(curr_obs)
         if num_samples > self.capacity:
@@ -702,15 +517,12 @@ class ExperienceReplayBeta(ExperienceReplay):
             reward = reward[:self.capacity]
             done = done[:self.capacity]
             truncated = truncated[:self.capacity]
-            next_obs = next_obs[:self.capacity]
-
             num_samples = self.capacity
 
             self.all_buffers[self.states_index][:] = curr_obs[:self.capacity]
             self.all_buffers[self.actions_index][:] = action[:self.capacity]
             self.all_buffers[self.reward_index][:] = reward[:self.capacity]
             self.all_buffers[self.dones_index][:] = done[:self.capacity]
-            self.all_buffers[self.next_states_index][:] = next_obs[:self.capacity]
             self.all_buffers[self.dones_index][-1] = True
             self.all_buffers[self.truncated_index][-1] = True
             self.latest_obs_start_idx = 0
@@ -725,7 +537,6 @@ class ExperienceReplayBeta(ExperienceReplay):
             self.all_buffers[self.reward_index][placement_index:placement_index + num_samples] = reward
             self.all_buffers[self.dones_index][placement_index:placement_index + num_samples] = done
             self.all_buffers[self.truncated_index][placement_index:placement_index + num_samples] = truncated
-            self.all_buffers[self.next_states_index][placement_index:placement_index + num_samples] = next_obs
             self.curr_size = self.capacity
             self.latest_obs_start_idx = placement_index
             self.latest_obs_end_idx = placement_index + num_samples
@@ -737,7 +548,6 @@ class ExperienceReplayBeta(ExperienceReplay):
             self.all_buffers[self.reward_index][self.curr_size:self.curr_size + num_samples] = reward
             self.all_buffers[self.dones_index][self.curr_size:self.curr_size + num_samples] = done
             self.all_buffers[self.truncated_index][self.curr_size:self.curr_size + num_samples] = truncated
-            self.all_buffers[self.next_states_index][self.curr_size: self.curr_size+num_samples] = next_obs
             self.latest_obs_start_idx = self.curr_size
             self.latest_obs_end_idx = self.curr_size + num_samples
             self.curr_size += num_samples
@@ -748,9 +558,9 @@ class ExperienceReplayBeta(ExperienceReplay):
         """return all last episode samples, or specified num samples"""
 
         assert self.num_episodes_added == num_episodes, "change expericne to deal with variating requests of latsets episodes"
-
+        buffers = self.get_all_buffers()
         return [buff[self.latest_obs_start_idx:self.latest_obs_end_idx]
-                            for buff in self.all_buffers]
+                            for buff in buffers]
 
 
 class ForgettingExperienceReplayBeta(ExperienceReplayBeta):
@@ -762,24 +572,21 @@ class ForgettingExperienceReplayBeta(ExperienceReplayBeta):
         super().init_buffers()
 
 
-    def append(self, curr_obs, action, reward, done, truncated, next_obs):
+    def append(self, curr_obs, action, reward, done, truncated):
         num_samples = len(curr_obs)
         self.num_episodes_added = sum(done)
         curr_obs = ObsWraper(curr_obs)
-        next_obs = ObsWraper(next_obs)
         self.all_buffers[self.states_index] = curr_obs #np.array(curr_obs).astype(np.float32)
         self.all_buffers[self.actions_index]= np.array(action).astype(np.float32)
         self.all_buffers[self.reward_index]= np.array(reward).astype(np.float32)
         self.all_buffers[self.dones_index] = np.array(done).astype(np.float32)
         self.all_buffers[self.truncated_index] = np.array(truncated).astype(np.float32)
-        self.all_buffers[self.next_states_index] = next_obs #np.array(next_obs).astype(np.float32)
         self.curr_size = num_samples
-
 
 
     def get_last_episodes(self, num_episodes):
         """return all last episode samples, or specified num samples"""
-        return self.all_buffers
+        return self.get_all_buffers()
         
 
 # class UniqueExperienceReplay(ExperienceReplay):
@@ -815,16 +622,8 @@ class ForgettingExperienceReplayBeta(ExperienceReplayBeta):
 #         super().append(curr_obs, action, reward, done, truncated, next_obs)
         
 
-def worker(env, conn, idx):
+def worker(env, conn):
     proc_running = True
-    try:
-        env.set_random_seed(idx)
-    except:
-        pass
-    try:
-        env.seed(idx)
-    except:
-        pass
 
     done = False
 
@@ -844,13 +643,17 @@ def worker(env, conn, idx):
         elif (cmd == "reset"):
             conn.send(env.reset())
 
-        elif (cmd == "clear_env"):
-            next_state = env.clear_env()
-            conn.send(next_state)
+        # elif (cmd == "clear_env"):
+        #     next_state = env.clear_env()
+        #     conn.send(next_state)
 
-        elif (cmd == "step_generator"):
-            next_state, reward, done, _ = env.step_generator(msg)
-            conn.send((next_state, reward, done, _))
+        # elif (cmd == "step_generator"):
+        #     next_state, reward, done, _ = env.step_generator(msg)
+        #     conn.send((next_state, reward, done, _))
+
+        # elif (cmd == "sample_random_state"):
+        #     state = env.sample_random_state()
+        #     conn.send(state)
 
         elif(cmd == "get_env"):
             conn.send(env)
@@ -858,10 +661,6 @@ def worker(env, conn, idx):
         elif (cmd == "close"):
             proc_running = False
             return conn.close()
-
-        elif (cmd == "sample_random_state"):
-            state = env.sample_random_state()
-            conn.send(state)
 
         elif (cmd == "change_env"):
             env = msg
@@ -913,24 +712,26 @@ class ParallelEnv_m():
         self.num_envs = num_envs
         self.process = namedtuple("Process", field_names=[
                                   "proc", "connection"])
-
         self.comm = []
         for idx in range(self.num_envs):
             parent_conn, worker_conn = Pipe()
             if for_val: #only for running orderd validation envs in parallel
                 env.reset()
                 # print(env.game_index)
-            proc = Process(target=worker, args=((copy.deepcopy(env)), worker_conn, idx))
+            proc = Process(target=worker, args=((copy.deepcopy(env)), worker_conn))
             proc.start()
             self.comm.append(self.process(proc, parent_conn))
 
+
     def change_env(self, env):
         [p.connection.send(("change_env", copy.deepcopy(env))) for p in self.comm]
+
 
     def get_envs(self):
         [p.connection.send(("get_env", "")) for p in self.comm]
         res = [p.connection.recv() for p in self.comm]
         return res
+
 
     def reset(self):
         [p.connection.send(("reset", "")) for p in self.comm]
@@ -944,12 +745,13 @@ class ParallelEnv_m():
 
         # Receive response from envs.
         res = [p.connection.recv() for p in self.comm]
-        next_states, rewards, dones,truncated, _ = zip(*res)
+        next_states, rewards, terminated, truncated, _ = zip(*res)
         rewards = np.array(rewards)
-        dones = np.array(dones)
+        terminated = np.array(terminated)
+        truncated = np.array(truncated)
         _ = np.array(_)
 
-        return next_states, rewards, dones,truncated, _
+        return next_states, rewards, terminated, truncated, _
     
     def render(self):
         print('Cant draw parallel envs [WIP]')
@@ -1012,9 +814,7 @@ class SingleEnv_m():
           action = actions
 
         next_states, rewards, terminated, trunc, _ = self.env.step(action)
-        next_states = np.array(next_states, ndmin=1)
-
-        next_states = next_states[np.newaxis, :]
+        next_states = np.array(next_states, ndmin=2)
         rewards = np.array(rewards, ndmin=1)
         terminated = np.array(terminated,ndmin=1)
         trunc = np.array(trunc, ndmin=1)

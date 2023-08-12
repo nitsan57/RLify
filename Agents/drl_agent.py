@@ -1,8 +1,9 @@
 from tqdm import tqdm
 from abc import ABC, abstractmethod
-
+import gymnasium as gym
 import utils
-from .agent_utils import ExperienceReplay, LinearRandomExplorer
+from .agent_utils import ExperienceReplay
+from .explorers import RandomExplorer
 import numpy as np
 import functools
 import operator
@@ -13,6 +14,9 @@ from torch.distributions import Categorical
 from .agent_utils import ExperienceReplay, ObsShapeWraper, ObsWraper
 import uuid
 import pygame
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 torch.autograd.profiler.profile(False)
@@ -23,18 +27,35 @@ from Models import model_factory
 import copy
 
 class RL_Agent(ABC):
+    """
+    RL_Agent is an abstract class that defines the basic structure of an RL agent.
+    It is used as a base class for all RL agents.
+    """
     TRAIN = 0
     EVAL = 1
 
-    def __init__(self, obs_space, action_space, max_mem_size=10e6, batch_size=256, random_explorer = LinearRandomExplorer() , num_parallel_envs=4, model_class=None, model_kwargs=dict(), lr=0.0001, device=None, norm_params={}, experience_class=ExperienceReplay, discount_factor=0.99, horizon=-1) -> None:
-        """if num_parallel_envs is none it will use batch size"""
+    def __init__(self, obs_space: gym.spaces, action_space : gym.spaces, max_mem_size=10e6, batch_size=256, explorer = RandomExplorer() , num_parallel_envs=4, model_class=None, model_kwargs=dict(), lr=0.0001, device=None, norm_params={}, experience_class=ExperienceReplay, discount_factor=0.99) -> None:
+        """
+        Args:
+            obs_space (gym.spaces): observation space of the environment
+            action_space (gym.spaces): action space of the environment
+            max_mem_size (int, optional): maximum size of the experience replay buffer. Defaults to 10e6.
+            batch_size (int, optional): batch size for training. Defaults to 256.
+            explorer (Explorer, optional): exploration method. Defaults to RandomExplorer().
+            num_parallel_envs (int, optional): number of parallel environments. Defaults to 4.
+            model_class (AbstractModel, optional): model class. Defaults to None.
+            model_kwargs (dict, optional): model kwargs. Defaults to dict().
+            lr (float, optional): learning rate. Defaults to 0.0001.
+            device (torch.device, optional): device to run on. Defaults to None.
+            norm_params (dict, optional): normalization parameters. Defaults to {}.
+        """
         super(RL_Agent, self).__init__()
-        self.env = None
 
+
+        self.env = None
         self.r_func = lambda s,a,r: r
-        self.random_explorer = random_explorer
+        self.explorer = explorer
         self.id = uuid.uuid4()
-        self.horizon= horizon
         self.norm_params = copy.copy(norm_params)
         self.model_kwargs = model_kwargs
         self.obs_space = obs_space #obs_shape
@@ -46,24 +67,21 @@ class RL_Agent(ABC):
                 norm_params['mean'] = ObsWraper({k: 0})
                 norm_params['std'] = ObsWraper({k: 1})
         self.norm_params = norm_params
-        self.update_policy = self.update_policy_reg
         self.model_class = model_class
-
+        self.batch_size = batch_size
         self.num_parallel_envs = batch_size if num_parallel_envs is None else num_parallel_envs
-        # if model_class.is_rnn:
-        #     assert self.num_parallel_envs <= batch_size, f"please provide batch_size>= num_parallel_envs current: {batch_size}, {num_parallel_envs},"
+        if model_class.is_rnn:
+            logger.info(f"RNN model detected, using batch_size = num_parallel_env = {self.num_parallel_envs}")
+            self.batch_size = self.num_parallel_envs
 
         self.eval_mode = self.EVAL
         
         self.experience = experience_class(max_mem_size, self.obs_shape)
         self.mem_size = max_mem_size
-        self.batch_size = batch_size
+        
         self.device = device if device is not None else utils.init_torch() #default goes to cuda -> cpu' or enter manualy
         
         self.lr = lr
-        self.store_entropy = False
-        self.init_entropy_buffer()
-        self.random_act = self.random_act_discrete
         self.action_space = action_space
         self.define_action_space()
         self.init_models()
@@ -71,87 +89,41 @@ class RL_Agent(ABC):
 
     @abstractmethod
     def init_models(self):
-        self.rnn = self.model_class.is_rnn
-        if self.rnn:
-            self.update_policy = self.update_policy_rnn
+        raise NotImplementedError
+    #     self.rnn = self.model_class.is_rnn
+    #     if self.rnn:
+    #         self.update_policy = self.update_policy_rnn
 
 
     @abstractmethod
-    def update_policy_reg(self, *exp):
+    def update_policy(self, *exp):
         raise NotImplementedError
     
 
-    @abstractmethod
-    def update_policy_rnn(self, *exp):
-        raise NotImplementedError
+    # @abstractmethod
+    # def update_policy_rnn(self, *exp):
+    #     raise NotImplementedError
 
 
     def define_action_space(self):
         self.action_dtype = self.action_space.dtype
-        self.n_actions = 1
         
+        if np.issubdtype(self.action_dtype, np.integer):           
+            try:
+                self.n_actions = self.action_space.shape[0]
+            except:
+                self.n_actions = 1
 
-        if np.issubdtype(self.action_dtype, np.integer):
             self.possible_actions = self.action_space.n
             self.best_act = self.best_act_discrete
         else:
             self.n_actions = self.action_space.shape[0]
             self.possible_actions = 'continuous'
-            self.random_act = self.random_act_cont
             self.best_act = self.best_act_cont
             
 
-    def random_act_discrete(self,obs,  num_obs):
-        return self.return_correct_actions_dim(np.random.choice(self.possible_actions, num_obs),num_obs)
-    
-
-    def random_act_cont(self,obs,  num_obs):
-        return self.return_correct_actions_dim(np.random.uniform(float(self.action_space.low), float(self.action_space.high), num_obs), num_obs)
-
-
     def __del__(self):
         self.close_env_procs()
-
-
-    def calc_entropy_from_vec(self, batched_vector):
-        logits = F.log_softmax(batched_vector,1)
-        return self.calc_entropy_from_logits(logits)
-
-
-    def calc_entropy_from_logits(self, logits):
-        entropy = Categorical(logits= logits).entropy().detach().cpu().numpy()
-        return entropy
-
-
-    def fix_entropy_buffers(self, done_indices):
-        tmp=  []
-        
-        for i,x in enumerate(self.smodel_ktored_entropy):
-            tmp.append(x[:done_indices[i]])
-        self.stored_entropy = tmp
-
-
-    def get_stored_entropy(self,):
-        if self.set_store_entropy:
-            return self.stored_entropy
-        else:
-            print("calling a function withou set_store_entropy first will allwayes return 0")
-            return 0
-
-
-    def init_entropy_buffer(self):
-        if self.store_entropy:
-            self.stored_entropy = [[] for i in range(self.num_parallel_envs)]
-
-
-    def clear_stored_entropy(self):
-        self.init_entropy_buffer()
-
-
-    def set_store_entropy(self, val : bool):
-        self.store_entropy = val
-        if self.store_entropy:
-            self.init_entropy_buffer()
 
 
     @abstractmethod
@@ -203,7 +175,6 @@ class RL_Agent(ABC):
     def set_eval_mode(self):
         self.reset_rnn_hidden()
         self.eval_mode = self.EVAL
-        self.set_store_entropy(False)
 
 
     def train_episodial(self, env, n_episodes, max_episode_len=None, disable_tqdm=False):
@@ -235,7 +206,6 @@ class RL_Agent(ABC):
         best_agent_score = None
         while i < n_iters:
             rewards_vector = self.collect_episode_obs(env, max_episode_len, num_to_collect_in_parallel=self.num_parallel_envs)
-            self.random_explorer.update()
             num_steps_collected = 0
             for r in rewards_vector:
                 train_rewards.append(np.sum(r))
@@ -265,7 +235,6 @@ class RL_Agent(ABC):
     def set_num_parallel_env(self, num_parallel_envs):
         assert self.num_parallel_envs <= self.batch_size, f"please provide batch_size>= num_parallel_envs current: {self.batch_size}, {num_parallel_envs},"
         self.num_parallel_envs = num_parallel_envs
-        self.init_entropy_buffer()
 
 
     @abstractmethod
@@ -309,21 +278,7 @@ class RL_Agent(ABC):
     def pack_from_done_indices(self, data, seq_indices, sorted_seq_lens, done_indices):
         """returns pakced obs"""
         assert np.all(np.sort(sorted_seq_lens, kind='stable')[::-1] == sorted_seq_lens)
-        num_envs = len(done_indices)
         max_colected_len = np.max(sorted_seq_lens)
-
-        min_batch_size = num_envs
-        batch_size = num_envs
-
-        # batch_size_mul = self.batch_size / num_envs
-        # min_collected_len = min(sorted_seq_lens)
-
-
-        # if (min_collected_len / batch_size_mul) < 1:
-        #     batch_size = min_batch_size
-        # else:
-        #     batch_size = int(num_envs*batch_size_mul)
-
 
         packed_obs = ObsWraper()
         for k in data:
@@ -342,11 +297,6 @@ class RL_Agent(ABC):
             padded_seq_batch = padded_seq_batch.reshape((self.num_parallel_envs, max_new_seq_len, np.prod(obs_shape)))
             pakced_states = torch.nn.utils.rnn.pack_padded_sequence(padded_seq_batch, lengths=np.array(new_lens), batch_first=True)
             packed_obs[k] = pakced_states
-
-        # padded_seq_batch = torch.nn.utils.rnn.pad_sequence(temp, batch_first=True)
-
-        # padded_seq_batch = padded_seq_batch.reshape((batch_size, max_new_seq_len, np.prod(obs_shape)))
-        # pakced_states = torch.nn.utils.rnn.pack_padded_sequence(padded_seq_batch, lengths=np.array(new_lens), batch_first=True, enforce_sorted=False)
 
         return packed_obs
 
@@ -392,12 +342,12 @@ class RL_Agent(ABC):
         elif num_obs != len_obs and num_obs != 1:
             raise Exception(f"number of observations do not match real observation num obs: {num_obs}, vs real len: {len(observations)}")
         # return observations
-        if self.rnn:
-            seq_lens = np.ones(len_obs)
-            states = self.pack_sorted_data(observations, seq_lens)
-            # states = torch.from_numpy(observations).to(self.device)
-        else:
-            states = observations.get_as_tensors(self.device)
+        # if self.rnn:
+        #     seq_lens = np.ones(len_obs)
+        #     states = self.pack_sorted_data(observations, seq_lens)
+        #     # states = torch.from_numpy(observations).to(self.device)
+        # else:
+        states = observations.get_as_tensors(self.device)
         return states
 
 
@@ -445,9 +395,6 @@ class RL_Agent(ABC):
         observations = []
 
         for item in reset_function():
-            
-            # curr_item = ObsWraper(item)
-
             observations.append([item[0]])
         
         env_dones = np.array([False for i in range(num_to_collect_in_parallel)])
@@ -456,7 +403,6 @@ class RL_Agent(ABC):
 
         rewards = [[] for i in range(num_to_collect_in_parallel)]
         actions = [[] for i in range(num_to_collect_in_parallel)]
-        next_observations = [[] for i in range(num_to_collect_in_parallel)]
         dones = [[] for i in range(num_to_collect_in_parallel)]
         truncated = [[] for i in range(num_to_collect_in_parallel)]
 
@@ -465,21 +411,18 @@ class RL_Agent(ABC):
         while not all(env_dones):
             relevant_indices = np.where(env_dones == False)[0].astype(np.int32)         
             
-            if self.random_explorer.explore():
-                current_actions = self.random_act(latest_observations, num_to_collect_in_parallel)
+            if self.explorer.explore():
+                explore_action = self.explorer.act(self.action_space, latest_observations, num_to_collect_in_parallel)
+                current_actions = self.return_correct_actions_dim(explore_action, num_to_collect_in_parallel)
             else:
                 current_actions = self.act(latest_observations, num_to_collect_in_parallel)
             # TODO DEBUG
             # allways use all envs to step, even some envs are done already
-
             next_obs, reward, terminated, trunc, info = step_function(current_actions)
-
-            next_obs = next_obs
 
             for i in relevant_indices:
 
                 actions[i].append(current_actions[i])
-                next_observations[i].append(next_obs[i])
                 intrisic_reward = self.intrisic_reward_func(latest_observations[i], current_actions[i], reward[i])
                 rewards[i].append(intrisic_reward)
                 truncated[i].append(trunc[i])
@@ -489,6 +432,7 @@ class RL_Agent(ABC):
 
                 max_episode_steps += 1
                 if done:
+                    # import pdb;pdb.set_trace()
                     continue
 
                 if episode_len_exceeded(max_episode_steps):
@@ -501,7 +445,6 @@ class RL_Agent(ABC):
 
             latest_observations = [observations[i][-1] for i in range(num_to_collect_in_parallel)]
             
-            latest_observations = latest_observations
 
         observations = functools.reduce(operator.iconcat, observations, [])
         observations = self.norm_obs(observations) # it is normalized in act, so here we save it normlized to replay buffer aswell
@@ -509,15 +452,13 @@ class RL_Agent(ABC):
         rewards_x = functools.reduce(operator.iconcat, rewards, [])
         dones = functools.reduce(operator.iconcat, dones, [])
         truncated = functools.reduce(operator.iconcat, truncated, [])
-
-        if self.store_entropy:
-            done_indices = np.where(np.array(dones) == True)[0]
-            self.fix_entropy_buffers(done_indices)
         
-        next_observations = functools.reduce(operator.iconcat, next_observations, [])
-        next_observations = self.norm_obs(next_observations) # it is normalized in act, so here we save it normlized to replay buffer aswell
-        self.experience.append(observations, actions, rewards_x, dones, truncated, next_observations)
+        # next_observations = functools.reduce(operator.iconcat, next_observations, [])
+        # next_observations = self.norm_obs(next_observations) # it is normalized in act, so here we save it normlized to replay buffer aswell
+
+        self.experience.append(observations, actions, rewards_x, dones, truncated)
         self.reset_rnn_hidden()
+        self.explorer.update()
         return rewards
 
 
@@ -534,10 +475,10 @@ class RL_Agent(ABC):
 
     @abstractmethod
     def clear_exp(self):
-        raise NotImplementedError
+        self.experience.clear()
     
 
-    def run_env(self, env, best_act=True, num_runs=1, render=False):
+    def run_env(self, env, best_act=True, num_runs=1):
         "runs env in eval"
         self.set_eval_mode()
         env = ParallelEnv(env, 1)
@@ -561,7 +502,5 @@ class RL_Agent(ABC):
                 if done:
                     break
             mean_r +=R
-        if render:
-            env.render()
         pygame.display.quit()
         return mean_r / num_runs

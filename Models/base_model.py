@@ -33,7 +33,7 @@ class AbstractModel(torch.nn.Module, ABC):
 
         
     @abstractmethod
-    def forward(self, x):
+    def forward(self, x, dones = None):
         raise NotImplementedError
 
     @abstractmethod
