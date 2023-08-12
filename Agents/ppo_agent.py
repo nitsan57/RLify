@@ -237,8 +237,6 @@ class PPO_Agent(RL_Agent):
         self.set_train_mode()
         logits = dist.log_prob(actions)
         return states, actions, rewards, dones, truncated, values, logits
-
-    def backprop(self, actor_loss, critic_loss):
         
 
     def update_policy(self, *exp):
