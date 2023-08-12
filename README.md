@@ -23,7 +23,8 @@ And many more features!
 
 ## Work in Progress
 
-- Adding support for callbacks.git
+- Add support for callbacks.git
+- Add Suppor for MARL
 
 ## Contributions
 
