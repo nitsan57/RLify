@@ -2,50 +2,49 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+
+from Agents.explorers import RandomExplorer
 from .agent_utils import ExperienceReplayBeta, ExperienceReplay
 # from .action_spaces_utils import CAW
 from .drl_agent import RL_Agent
 import adabelief_pytorch
 from utils import HiddenPrints
+from collections import defaultdict
 
 class DQN_Agent(RL_Agent):
     """DQN Agent
     """
-    def __init__(self, dqn_reg=0.0, target_update_time = 100, batch_size=64, soft_exploit=True, **kwargs):
+    def __init__(self, dqn_reg=0.0, target_update_time = 100, batch_size=64, soft_exploit=True, explorer = RandomExplorer(), **kwargs):
         """
         Args:
             dqn_reg (float, optional): L2 regularization for the Q network. Defaults to 0.0.
             target_update_time (int, optional): How often to update the target network. Defaults to 100.
             batch_size (int, optional): Batch size for training. Defaults to 64.
-            soft_exploit (bool, optional): Whether to use soft exploit or not. Defaults to True.
+            soft_exploit (bool, optional): Whether to use soft exploit. Defaults to True.
             **kwArgs: Additional RL_Agent arguments.
         """
-        super(DQN_Agent, self).__init__(**kwargs, batch_size=batch_size)  # inits
+        super(DQN_Agent, self).__init__(explorer=explorer, **kwargs, batch_size=batch_size)  # inits
         self.soft_exploit = soft_exploit
         self.dqn_reg = dqn_reg
-        ### curr unused ###
+        ### curr unused ### for soft target update future support
         self.tau = 0.001
         self.alpha = 0.1
         ###################
-        l1 = nn.SmoothL1Loss(beta=0.01).to(self.device)
-        l2 = nn.MSELoss().to(self.device)
-        # self.criterion = l1
         self.criterion = nn.MSELoss().to(self.device)
-        if not np.issubdtype(self.action_dtype, np.integer):
-            assert False, "currently is not supported continuous space in dqn"
-            self.continous_transform = lambda x: CAW(self.action_space.low, self.action_space.high, x[:,0], torch.nn.Softplus()(x[:,1])) 
         self.init_models()
-
 
         self.target_update_time = target_update_time # update target every X learning epochs
         self.target_update_counter = 0
-        self.losses =[]
 
 
     def init_models(self):
         """
         Initializes the Q and target Q networks.
         """
+        if not np.issubdtype(self.action_dtype, np.integer):
+            assert False, "currently is not supported continuous space in dqn"
+            self.continous_transform = lambda x: CAW(self.action_space.low, self.action_space.high, x[:,0], torch.nn.Softplus()(x[:,1])) 
+
         if np.issubdtype(self.action_dtype, np.integer):
             self.Q_model = self.model_class(input_shape=self.obs_shape, out_shape=self.possible_actions, **self.model_kwargs).to(self.device)
             self.target_Q_model = self.model_class(input_shape=self.obs_shape, out_shape=self.possible_actions, **self.model_kwargs).to(self.device)
@@ -54,8 +53,6 @@ class DQN_Agent(RL_Agent):
             self.target_Q_model = self.model_class(input_shape=self.obs_shape, out_shape=2  or 1, **self.model_kwargs).to(self.device)
             # self.policy_nn = torch.compile(self.policy_nn)
         
-        list(self.Q_model.children())[-1].weight.data.fill_(0.001)
-        list(self.Q_model.children())[-1].bias.data.fill_(0.001)
         with HiddenPrints():
             self.optimizer = adabelief_pytorch.AdaBelief(self.Q_model.parameters(), self.lr, print_change_log=False, amsgrad=False)
         self.hard_target_update()
@@ -183,7 +180,6 @@ class DQN_Agent(RL_Agent):
 
     def _get_dqn_experiences(self, random_samples):
         """Get a mix of samples, including all last episode- makes sure we dont miss any seen states"""
-
         if type(self.experience) in [ExperienceReplayBeta]:
             # try to get about self.num_parallel_envs game lens
             observations, actions, rewards, dones, truncated, next_observations = self.experience.sample_random_batch(self.num_parallel_envs*400)
@@ -220,15 +216,21 @@ class DQN_Agent(RL_Agent):
 
 
     def update_policy(self, *exp):
+        """
+        Updates the policy.
+        Using the DQN algorithm.
+        """
         if len(exp) == 0:
-            states, actions, rewards, dones, truncated, next_states = self._get_dqn_experiences(random_samples=(False if self.model_class.is_rnn else True)) #self._get_dqn_experiences(random_samples=(not self.rnn))
+            # states, actions, rewards, dones, truncated, next_states = self._get_dqn_experiences(random_samples=(False if self.model_class.is_rnn else True)) #self._get_dqn_experiences(random_samples=(not self.rnn))
+            states, actions, rewards, dones, truncated, next_states = self._get_dqn_experiences(random_samples=(False)) #self._get_dqn_experiences(random_samples=(not self.rnn))
         else:
             states, actions, rewards, dones, truncated, next_states = exp
 
-
+        epoch_metrics = defaultdict(float)
         all_samples_len = len(states)
-        b_size = self.batch_size if not self.Q_model.is_rnn else all_samples_len
-        num_grad_updates = int(all_samples_len/self.batch_size)
+        b_size = all_samples_len if self.model_class.is_rnn else self.batch_size
+        num_grad_updates = int(all_samples_len/self.batch_size) if self.model_class.is_rnn else 1
+        
         for g in range(num_grad_updates):
             for b in range(0,all_samples_len, b_size):
                 batched_states = states[b:b+b_size]
@@ -247,35 +249,29 @@ class DQN_Agent(RL_Agent):
                     q_next = self.target_Q_model(batched_next_states, batched_dones).detach().max(1)[0]
 
                 batched_terminated = batched_dones*(1-batched_truncated) # dones but not truncated
-                expected_next_values = batched_rewards + (1-batched_terminated) * self.discount_factor * q_next        
+                # import pdb; pdb.set_trace()
+                expected_next_values = batched_rewards + (1-batched_terminated) * self.discount_factor * q_next
 
                 loss = self.criterion(q_values, expected_next_values) + self.dqn_reg*q_values.pow(2).mean()
                 self.optimizer.zero_grad(set_to_none=True)
-                self.losses.append(loss.item())
                 loss.backward()
                 self.optimizer.step()
+                epoch_metrics['q_loss'] += loss.item()
+                epoch_metrics['updates'] +=1
                 
 
                 self.target_update_counter += 1
                 if self.target_update_counter > self.target_update_time:
-                    # print("updated")
                     self.hard_target_update()
                     self.target_update_counter = 0
+        self.metrics['q_loss'].append(epoch_metrics['q_loss']/epoch_metrics['updates'])
 
 
     def get_last_collected_experiences(self, num_episodes):
         """Mainly for Paired Algorithm support"""
-        # return [torch.from_numpy(x)).to(self.device) for x in self.experience.get_last_episodes(num_episodes)]
-
         exp  = self.experience.get_last_episodes(num_episodes)
-        res = []
-        for i,x in enumerate(exp):
-            if i == self.experience.states_index or i == self.experience.next_states_index:
-                res.append(x.to(self.device))
-            else:
-                res.append(torch.from_numpy(x).to(self.device))
-        return res
+        return exp
+   
 
-    
     def clear_exp(self):
         self.experience.clear()

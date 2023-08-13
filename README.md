@@ -23,7 +23,8 @@ And many more features!
 
 ## Work in Progress
 
-- Add support for callbacks.git
+- Add support for callbacks
+- Add Tensorboard support for metrics
 - Add Suppor for MARL
 
 ## Contributions

@@ -57,7 +57,7 @@ def test_2e2():
     model_class = fc.FC
     model_kwargs = {'embed_dim': 64, 'repeat':2}
     agent = PPO_Agent(obs_space=env.observation_space, action_space=env.action_space, device=device, batch_size=1024, max_mem_size=10**5, num_parallel_envs=4, lr=3e-4, entropy_coeff=0.05, model_class=model_class, model_kwargs=model_kwargs, discount_factor=0.99)
-    train_stats = agent.train_n_steps(env=env,n_steps=1000)
+    train_stats = agent.train_n_steps(env=env,n_steps=10000)
     # ++RNN
     env_name = "LunarLander-v2"
     env = gym.make(env_name, render_mode=None, continuous=True)
@@ -98,7 +98,6 @@ def test_2e2():
     # +DQN - NOT SUPPORTED CURRENTLY
     # ++FC
     # ++RNN
-
     # TEST FUNCNIONALITY, (MULTI-ACTIONS)
     car_env = gym.make("LunarLanderContinuous-v2", render_mode=None)
     agent_car = PPO_Agent(obs_space=car_env.observation_space, action_space=car_env.action_space, device=device, batch_size=4096, max_mem_size=10**5,num_parallel_envs=4, lr=3e-4, model_class=fc.FC, explorer = RandomExplorer(0.3,0,0))

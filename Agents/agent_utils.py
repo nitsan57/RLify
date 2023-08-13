@@ -326,7 +326,8 @@ class ObsWraper:
     #         self.data = copy.deepcopy(other.data)
     #         self.len = other.len
 
-    def np_zero_roll(self, indx, axis=0, inplace=False):
+    def np_zero_roll(self, indx, inplace=False):
+        """Rolls the data by indx and fills the empty space with zeros - only on axis 0"""
         temp_dict = {}
         for k, v in self.data.items():
             temp_dict[k] = np.concatenate([self.data[k][-indx:], np.zeros_like(self.data[k][:-indx])])
@@ -389,7 +390,7 @@ class ExperienceReplay:
             done_index = dones[relevant_index]
             for i in range(len(self.all_buffers)):
                 if i == self.states_index:
-                    self.all_buffers[i] = self.all_buffers[i].np_zero_roll(-done_index - 1, axis=0, inplace=False)
+                    self.all_buffers[i] = self.all_buffers[i].np_zero_roll(-done_index - 1, inplace=False)
                 else:
                     self.all_buffers[i] = np.concatenate([self.all_buffers[i][-(-done_index-1):], np.zeros_like(self.all_buffers[i][:-(-done_index-1)])]) # np.roll(self.all_buffers[i], -done_index - 1, axis=0)
             
@@ -446,7 +447,6 @@ class ExperienceReplay:
         else:  # we dont want the last done in our batch
             num_samples = self.curr_size - episode_indices[-num_episodes - 1] - 1  # exclude first done indice
         
-
         return self.get_last_samples(num_samples)
 
 
@@ -468,16 +468,19 @@ class ExperienceReplay:
                                 for buff in self.all_buffers]
 
         else:
-            last_samples = [buff[self.curr_size-num_samples:self.curr_size]
+            first_sample_idx = self.curr_size - num_samples
+            last_samples = [buff[first_sample_idx:self.curr_size]
                             for buff in self.all_buffers]
-
+            
+        
         # Add next_obs:
-        last_samples.append(self.all_buffers[self.states_index].np_zero_roll(1, axis=0, inplace=False))
+        last_samples.append(self.all_buffers[self.states_index][first_sample_idx:self.curr_size].np_zero_roll(-1, inplace=False))
         return last_samples
 
     def get_all_buffers(self):
         buffers = copy.deepcopy(self.all_buffers)
-        next_obs = buffers[self.states_index].np_zero_roll(1, axis=0, inplace=False)
+        next_obs = buffers[self.states_index].np_zero_roll(-1, inplace=False)
+
         buffers.append(next_obs)
         return buffers
 

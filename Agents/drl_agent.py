@@ -15,6 +15,8 @@ from .agent_utils import ExperienceReplay, ObsShapeWraper, ObsWraper
 import uuid
 import pygame
 import logging
+import pandas as pd
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +87,7 @@ class RL_Agent(ABC):
         self.action_space = action_space
         self.define_action_space()
         self.init_models()
+        self.metrics = defaultdict(list)
 
 
     @abstractmethod
@@ -100,9 +103,9 @@ class RL_Agent(ABC):
         raise NotImplementedError
     
 
-    # @abstractmethod
-    # def update_policy_rnn(self, *exp):
-    #     raise NotImplementedError
+    def get_train_metrics(self):
+        return pd.DataFrame(self.metrics)
+        
 
 
     def define_action_space(self):

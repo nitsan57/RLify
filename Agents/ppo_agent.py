@@ -9,6 +9,7 @@ from .explorers import RandomExplorer
 from .drl_agent import RL_Agent
 import adabelief_pytorch
 from utils import HiddenPrints
+from collections import defaultdict
 
 
 
@@ -244,6 +245,7 @@ class PPO_Agent(RL_Agent):
         Update the policy network.
         Args: exp (tuple): Experience tuple.
         """
+        epoch_metrics = defaultdict(float)
         if len(exp) == 0:
             states, actions, rewards, dones, truncated, values, logits = self._get_ppo_experiences()
         else:
@@ -258,9 +260,10 @@ class PPO_Agent(RL_Agent):
         
         all_samples_len = len(states)
         b_size = self.batch_size if not self.model_class.is_rnn else all_samples_len
+        rand_perm = False if (self.model_class.is_rnn) else True
 
         for e in range(self.num_epochs_per_update):
-            indices_perm = torch.randperm(len(returns)) if not self.model_class.is_rnn else torch.arange(len(returns))
+            indices_perm = torch.randperm(len(returns)) if rand_perm else torch.arange(len(returns))
             states = states[indices_perm]
             actions = actions[indices_perm]
             returns = returns[indices_perm]
@@ -304,8 +307,17 @@ class PPO_Agent(RL_Agent):
                 self.critic_optimizer.zero_grad(set_to_none=True)
                 critic_loss.backward()
                 self.critic_optimizer.step()
+                epoch_metrics['actor_loss'] += actor_loss.item()
+                epoch_metrics['critic_loss'] += critic_loss.item()
+                epoch_metrics['kl_div'] += kl_div
+                epoch_metrics['updates'] += 1
+            
             if kl_div_bool:
                 break
+        
+        self.metrics['kl_div'].append(epoch_metrics['kl_div']/epoch_metrics['updates'])
+        self.metrics['critic_loss'].append(epoch_metrics['critic_loss']/epoch_metrics['updates'])
+        self.metrics['actor_loss'].append(epoch_metrics['actor_loss']/epoch_metrics['updates'])
 
     
     def clear_exp(self):
