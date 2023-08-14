@@ -37,7 +37,7 @@ class RL_Agent(ABC):
     TRAIN = 0
     EVAL = 1
 
-    def __init__(self, obs_space: gym.spaces, action_space : gym.spaces, max_mem_size=10e6, batch_size=256, explorer = RandomExplorer() , num_parallel_envs=4, model_class=None, model_kwargs=dict(), lr=0.0001, device=None, norm_params={}, experience_class=ExperienceReplay, discount_factor=0.99) -> None:
+    def __init__(self, obs_space: gym.spaces, action_space : gym.spaces, max_mem_size=10e6, batch_size=256, explorer = RandomExplorer() , num_parallel_envs=4, model_class=None, model_kwargs=dict(), lr=0.0001, device=None, norm_params={}, experience_class=ExperienceReplay, discount_factor=0.99, tensorboard_dir = './tensorboard') -> None:
         """
         Args:
             obs_space (gym.spaces): observation space of the environment
@@ -54,7 +54,7 @@ class RL_Agent(ABC):
         """
         super(RL_Agent, self).__init__()
         self.id = uuid.uuid4()
-        self.writer = SummaryWriter(f'./tensorboard/{self.__class__.__name__}_{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}')
+        self.writer = SummaryWriter(f'{tensorboard_dir}/{self.__class__.__name__}_{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}')
         self.env = None
         self.r_func = lambda s,a,r: r
         self.explorer = explorer
