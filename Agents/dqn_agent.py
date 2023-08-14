@@ -178,8 +178,9 @@ class DQN_Agent(RL_Agent):
         self.target_Q_model.reset()
 
 
-    def _get_dqn_experiences(self, random_samples):
+    def _get_dqn_experiences(self):
         """Get a mix of samples, including all last episode- makes sure we dont miss any seen states"""
+        random_samples=(not self.rnn)
         if type(self.experience) in [ExperienceReplayBeta]:
             # try to get about self.num_parallel_envs game lens
             observations, actions, rewards, dones, truncated, next_observations = self.experience.sample_random_batch(self.num_parallel_envs*400)
@@ -222,12 +223,13 @@ class DQN_Agent(RL_Agent):
         """
         if len(exp) == 0:
             # states, actions, rewards, dones, truncated, next_states = self._get_dqn_experiences(random_samples=(False if self.model_class.is_rnn else True)) #self._get_dqn_experiences(random_samples=(not self.rnn))
-            states, actions, rewards, dones, truncated, next_states = self._get_dqn_experiences(random_samples=(False)) #self._get_dqn_experiences(random_samples=(not self.rnn))
+            states, actions, rewards, dones, truncated, next_states = self._get_dqn_experiences()
         else:
             states, actions, rewards, dones, truncated, next_states = exp
 
         epoch_metrics = defaultdict(float)
         all_samples_len = len(states)
+        
         b_size = all_samples_len if self.model_class.is_rnn else self.batch_size
         num_grad_updates = int(all_samples_len/self.batch_size) if self.model_class.is_rnn else 1
         

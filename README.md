@@ -18,13 +18,13 @@ For usage examples, please check `getting-started.ipynb`.
 - **Customizable Intrinsic Reward**: Overriding agent's intrinsic reward is as simple as using `agent.set_intrinsic_reward_func()`.
 - **Override Exploration Method Using heuristic functions**: Overriding exploration method from random choice to some user inputed heurstic to speed up train in certein env `HeuristicExplorer()`.
 - **Observation Flexibility**: RL Kit supports dictionary format for observations.
+- **Metrics:** Dumps all the metrics to tensorboard.
 
 And many more features!
 
 ## Work in Progress
 
 - Add support for callbacks
-- Add Tensorboard support for metrics
 - Add Suppor for MARL
 
 ## Contributions

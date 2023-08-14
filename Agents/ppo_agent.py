@@ -220,7 +220,8 @@ class PPO_Agent(RL_Agent):
 
         if safe_check:
             assert num_episodes <= self.num_parallel_envs
-            
+        
+        # get the obs in np array
         states, actions, rewards, dones, truncated, next_states = self.experience.get_last_episodes(num_episodes)
 
         actions = torch.from_numpy(actions).to(self.device)
@@ -228,8 +229,8 @@ class PPO_Agent(RL_Agent):
             actions = actions.unsqueeze(-1)
         rewards = torch.from_numpy(rewards).to(self.device)
         dones = torch.from_numpy(dones).to(self.device)
-        truncated = torch.from_numpy(truncated).to(self.device)        
-        states = states.get_as_tensors(self.device) # OBS WRAPER
+        truncated = torch.from_numpy(truncated).to(self.device)   
+        states = states.get_as_tensors(self.device) # OBS WRAPER api
 
         self.set_eval_mode()
         with torch.no_grad():

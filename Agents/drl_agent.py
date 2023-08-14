@@ -17,13 +17,14 @@ import pygame
 import logging
 import pandas as pd
 from collections import defaultdict
+from torch.utils.tensorboard import SummaryWriter
 
 logger = logging.getLogger(__name__)
 
 
 torch.autograd.profiler.profile(False)
 torch.autograd.profiler.emit_nvtx(False)
-
+import datetime
 
 from Models import model_factory
 import copy
@@ -52,12 +53,12 @@ class RL_Agent(ABC):
             norm_params (dict, optional): normalization parameters. Defaults to {}.
         """
         super(RL_Agent, self).__init__()
-
-
+        self.id = uuid.uuid4()
+        self.writer = SummaryWriter(f'./tensorboard/{self.__class__.__name__}_{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}')
         self.env = None
         self.r_func = lambda s,a,r: r
         self.explorer = explorer
-        self.id = uuid.uuid4()
+
         self.norm_params = copy.copy(norm_params)
         self.model_kwargs = model_kwargs
         self.obs_space = obs_space #obs_shape
@@ -127,6 +128,7 @@ class RL_Agent(ABC):
 
     def __del__(self):
         self.close_env_procs()
+        self.writer.close()
 
 
     @abstractmethod
@@ -228,6 +230,8 @@ class RL_Agent(ABC):
             i += collect_info[to_update_idx]
             ep_number += self.num_parallel_envs
             self.update_policy()
+            for k in self.metrics:
+                self.writer.add_scalar(k, self.metrics[k][-1], ep_number)
             self.reset_rnn_hidden()
 
         pbar.close()
