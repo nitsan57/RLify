@@ -22,6 +22,17 @@ For usage examples, please check `getting-started.ipynb`.
 
 And many more features!
 
+A short summery of curr supported:
+
+| Algorithm  | Discrete action | Continuous action | Recurrent |
+| ---------- | --------------- | ----------------- | --------- |
+| cliped-PPO | Yes             | Yes               | Yes       |
+| DQN (ddqn) | Yes             | No                | Yes       |
+
+In this table, the first column represents the algorithm names (PPO and DQN). The second column indicates whether the algorithm supports discrete actions (Yes) or not (No). The third column indicates whether the algorithm supports continuous actions (Yes) or not (No). The last column represents whether the algorithm supports recurrent architectures (Yes) or not (No).
+
+Please note that the table content is based on general information and may vary depending on the specific implementation or version of the algorithms.
+
 ## Work in Progress
 
 - Add support for callbacks
