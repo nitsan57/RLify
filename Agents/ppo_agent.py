@@ -5,7 +5,7 @@ import torch.optim as optim
 import numpy as np
 from .agent_utils import ExperienceReplay, ExperienceReplayBeta, ForgettingExperienceReplayBeta, calc_gaes
 from .action_spaces_utils import MCAW, MDA
-from .explorers import RandomExplorer
+from .explorers import Explorer, RandomExplorer
 from .drl_agent import RL_Agent
 import adabelief_pytorch
 from utils import HiddenPrints
@@ -18,21 +18,20 @@ class PPO_Agent(RL_Agent):
     Inherits from RL_Agent.
     """
     
-    def __init__(self, batch_size=1024, entropy_coeff=0.1, num_epochs_per_update=10, 
-                 kl_div_thresh=0.03, clip_param=0.1, experience_class = ForgettingExperienceReplayBeta,
-                 explorer = RandomExplorer(0,0,0), **kwargs):
-        """
-        Initialize the PPO agent.
+    def __init__(self, batch_size: int=1024, entropy_coeff: float=0.1, num_epochs_per_update: int=10, 
+                 kl_div_thresh: float=0.03, clip_param: float=0.1, experience_class: ForgettingExperienceReplayBeta = ForgettingExperienceReplayBeta,
+                 explorer: Explorer= RandomExplorer(0,0,0), **kwargs):
         
+        """
         Args:
             batch_size (int): Batch size for sampling from replay buffer.
             entropy_coeff (float): Entropy regularization coefficient. 
             num_epochs_per_update (int): Training epochs per update.
             kl_div_thresh (float): KL divergence threshold.
             clip_param (float): Clipping parameter.
-            experience_class (class): Experience replay class to use.
-            explorer (class): Class for random exploration.
-            **kwArgs: Additional RL_Agent arguments.
+            experience_class (ForgettingExperienceReplayBeta): Experience replay class to use.
+            explorer (Explorer): Class for random exploration.
+            kwArgs: Additional RL_Agent arguments.
         """
         
         super().__init__(**kwargs, batch_size=batch_size, experience_class=experience_class, explorer=explorer) # inits

@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 import gymnasium as gym
 import utils
 from .agent_utils import ExperienceReplay
-from .explorers import RandomExplorer
+from .explorers import Explorer, RandomExplorer
 import numpy as np
 import functools
 import operator
@@ -37,7 +37,7 @@ class RL_Agent(ABC):
     TRAIN = 0
     EVAL = 1
 
-    def __init__(self, obs_space: gym.spaces, action_space : gym.spaces, max_mem_size=10e6, batch_size=256, explorer = RandomExplorer() , num_parallel_envs=4, model_class=None, model_kwargs=dict(), lr=0.0001, device=None, norm_params={}, experience_class=ExperienceReplay, discount_factor=0.99, tensorboard_dir = './tensorboard') -> None:
+    def __init__(self, obs_space: gym.spaces, action_space : gym.spaces, max_mem_size: int=10e6, batch_size: int=256, explorer: Explorer = RandomExplorer() , num_parallel_envs: int=4, model_class: object=None, model_kwargs: dict=dict(), lr: float=0.0001, device: str=None, experience_class: object=ExperienceReplay, discount_factor: float=0.99, tensorboard_dir: str = './tensorboard') -> None:
         """
         Args:
             obs_space (gym.spaces): observation space of the environment
@@ -50,16 +50,20 @@ class RL_Agent(ABC):
             model_kwargs (dict, optional): model kwargs. Defaults to dict().
             lr (float, optional): learning rate. Defaults to 0.0001.
             device (torch.device, optional): device to run on. Defaults to None.
-            norm_params (dict, optional): normalization parameters. Defaults to {}.
+            tensorboard_dir (str, optional): tensorboard directory. Defaults to './tensorboard'.
+            
         """
+        # norm_params (dict, optional): normalization parameters. Defaults to {} - currently.
+
         super(RL_Agent, self).__init__()
         self.id = uuid.uuid4()
-        self.writer = SummaryWriter(f'{tensorboard_dir}/{self.__class__.__name__}_{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}')
+        if tensorboard_dir is not None:
+            self.writer = SummaryWriter(f'{tensorboard_dir}/{self.__class__.__name__}_{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}')
         self.env = None
         self.r_func = lambda s,a,r: r
         self.explorer = explorer
 
-        self.norm_params = copy.copy(norm_params)
+        self.norm_params = {} #copy.copy(norm_params)
         self.model_kwargs = model_kwargs
         self.obs_space = obs_space #obs_shape
         self.obs_shape = ObsShapeWraper(obs_space.shape) #obs_shape

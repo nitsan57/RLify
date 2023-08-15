@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 
-from Agents.explorers import RandomExplorer
+from Agents.explorers import Explorer, RandomExplorer
 from .agent_utils import ExperienceReplayBeta, ExperienceReplay
 # from .action_spaces_utils import CAW
 from .drl_agent import RL_Agent
@@ -12,16 +12,18 @@ from utils import HiddenPrints
 from collections import defaultdict
 
 class DQN_Agent(RL_Agent):
-    """DQN Agent
     """
-    def __init__(self, dqn_reg=0.0, target_update_time = 100, batch_size=64, soft_exploit=True, explorer = RandomExplorer(), **kwargs):
+    DQN Agent
+    """
+    def __init__(self, dqn_reg: float=0.0, target_update_time: int = 100, batch_size: int=64, soft_exploit: bool=True, explorer: Explorer = RandomExplorer(), **kwargs):
         """
         Args:
             dqn_reg (float, optional): L2 regularization for the Q network. Defaults to 0.0.
             target_update_time (int, optional): How often to update the target network. Defaults to 100.
             batch_size (int, optional): Batch size for training. Defaults to 64.
             soft_exploit (bool, optional): Whether to use soft exploit. Defaults to True.
-            **kwArgs: Additional RL_Agent arguments.
+            explorer (Explorer, optional): The explorer to use. Defaults to RandomExplorer().
+            kwargs: Additional RL_Agent arguments.
         """
         super(DQN_Agent, self).__init__(explorer=explorer, **kwargs, batch_size=batch_size)  # inits
         self.soft_exploit = soft_exploit
@@ -229,7 +231,7 @@ class DQN_Agent(RL_Agent):
 
         epoch_metrics = defaultdict(float)
         all_samples_len = len(states)
-        
+
         b_size = all_samples_len if self.model_class.is_rnn else self.batch_size
         num_grad_updates = int(all_samples_len/self.batch_size) if self.model_class.is_rnn else 1
         
