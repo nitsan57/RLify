@@ -1,7 +1,7 @@
 from tqdm import tqdm
 from abc import ABC, abstractmethod
 import gymnasium as gym
-import utils
+from rlkit import utils
 from .agent_utils import ExperienceReplay
 from .explorers import Explorer, RandomExplorer
 import numpy as np
@@ -18,6 +18,7 @@ import logging
 import pandas as pd
 from collections import defaultdict
 from torch.utils.tensorboard import SummaryWriter
+from munch import Munch
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ torch.autograd.profiler.profile(False)
 torch.autograd.profiler.emit_nvtx(False)
 import datetime
 
-from Models import model_factory
+from rlkit.Models import model_factory
 import copy
 
 class RL_Agent(ABC):
@@ -53,12 +54,11 @@ class RL_Agent(ABC):
             tensorboard_dir (str, optional): tensorboard directory. Defaults to './tensorboard'.
             
         """
-        # norm_params (dict, optional): normalization parameters. Defaults to {} - currently.
-
         super(RL_Agent, self).__init__()
+        
         self.id = uuid.uuid4()
-        if tensorboard_dir is not None:
-            self.writer = SummaryWriter(f'{tensorboard_dir}/{self.__class__.__name__}_{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}')
+        self.init_tb_writer(tensorboard_dir)
+
         self.env = None
         self.r_func = lambda s,a,r: r
         self.explorer = explorer
@@ -68,6 +68,8 @@ class RL_Agent(ABC):
         self.obs_space = obs_space #obs_shape
         self.obs_shape = ObsShapeWraper(obs_space.shape) #obs_shape
         self.discount_factor = discount_factor
+        # norm_params (dict, optional): normalization parameters. Defaults to {} - currently.
+        norm_params = {}
         if norm_params is None:
             norm_params = {'mean': {}, 'std': {}}
             for k in self.obs_shape.keys():
@@ -95,12 +97,22 @@ class RL_Agent(ABC):
         self.metrics = defaultdict(list)
 
 
+    def init_tb_writer(self, tensorboard_dir : str = None):
+        """
+        Initializes tensorboard writer
+        Args:
+            tensorboard_dir (str): tensorboard directory
+        """
+        if tensorboard_dir is not None:
+            self.writer = SummaryWriter(f'{tensorboard_dir}/{self.__class__.__name__}_{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}')
+        else: # just emulate a dummy writer
+            self.writer = Munch()
+            self.writer.add_scalar = lambda *args, **kwargs: None
+            self.writer.close = lambda *args, **kwargs: None
+
     @abstractmethod
     def init_models(self):
         raise NotImplementedError
-    #     self.rnn = self.model_class.is_rnn
-    #     if self.rnn:
-    #         self.update_policy = self.update_policy_rnn
 
 
     @abstractmethod
@@ -348,8 +360,7 @@ class RL_Agent(ABC):
             # BATCH=1
             len_obs = 1
             observations = observations[np.newaxis, :]
-            if self.rnn:
-                observations = observations[np.newaxis, :]
+
         elif num_obs != len_obs and num_obs != 1:
             raise Exception(f"number of observations do not match real observation num obs: {num_obs}, vs real len: {len(observations)}")
         # return observations

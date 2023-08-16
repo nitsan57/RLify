@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 
-from Agents.explorers import Explorer, RandomExplorer
+from rlkit.Agents.explorers import Explorer, RandomExplorer
 from .agent_utils import ExperienceReplayBeta, ExperienceReplay
 # from .action_spaces_utils import CAW
 from .drl_agent import RL_Agent
@@ -189,7 +189,7 @@ class DQN_Agent(RL_Agent):
 
     def _get_dqn_experiences(self):
         """Get a mix of samples, including all last episode- makes sure we dont miss any seen states"""
-        random_samples=(not self.rnn)
+        random_samples=(not self.model_class.is_rnn)
         if type(self.experience) in [ExperienceReplayBeta]:
             # try to get about self.num_parallel_envs game lens
             observations, actions, rewards, dones, truncated, next_observations = self.experience.sample_random_batch(self.num_parallel_envs*400)

@@ -12,3 +12,4 @@ ipykernel==6.23.2
 ipython==8.14.0
 nbformat==5.9.0
 kaleido==0.2.1
+munch==4.0.0
