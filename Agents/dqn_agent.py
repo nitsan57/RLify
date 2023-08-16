@@ -17,6 +17,13 @@ class DQN_Agent(RL_Agent):
     """
     def __init__(self, dqn_reg: float=0.0, target_update_time: int = 100, batch_size: int=64, soft_exploit: bool=True, explorer: Explorer = RandomExplorer(), **kwargs):
         """
+        Example::
+
+            env_name = "CartPole-v1"
+            env_c = gym.make(env_name, render_mode=None)
+            agent_c = DQN_Agent(obs_space=env_c.observation_space, action_space=env_c.action_space)
+            train_stats_c = agent_c.train_n_steps(env=env_c,n_steps=100000)
+
         Args:
             dqn_reg (float, optional): L2 regularization for the Q network. Defaults to 0.0.
             target_update_time (int, optional): How often to update the target network. Defaults to 100.

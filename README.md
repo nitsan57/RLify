@@ -4,9 +4,11 @@ RL Kit is a robust and flexible Reinforcement Learning (RL) framework. It provid
 
 ## Usage
 
-For usage examples, please check `getting-started.ipynb`.
+Clone the [repo](https://github.com/nitsan57/RLkit)
 
 Also check the [docs](https://nitsan57.github.io/RLkit-docs/)
+
+For usage examples, please check `getting-started.ipynb`.
 
 ## Features
 

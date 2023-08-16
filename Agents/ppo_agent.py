@@ -23,6 +23,14 @@ class PPO_Agent(RL_Agent):
                  explorer: Explorer= RandomExplorer(0,0,0), **kwargs):
         
         """
+        Example::
+
+            # create gymnasium environment:
+            env_name = "LunarLander-v2"
+            env = gym.make(env_name, render_mode=None)
+            agent = PPO_Agent(obs_space=env.observation_space, action_space=env.action_space)
+            train_stats = agent.train_n_steps(env=env,n_steps=350000)
+
         Args:
             batch_size (int): Batch size for sampling from replay buffer.
             entropy_coeff (float): Entropy regularization coefficient. 
@@ -96,8 +104,10 @@ class PPO_Agent(RL_Agent):
     def save_agent(self,f_name) -> dict:
         """
         Save the agent.
-        Args: f_name (str): File name.
-        returns: save_dict (dict): Dictionary of agent parameters.
+        Args: 
+            f_name (str): File name.
+        returns: 
+            save_dict (dict): Dictionary of agent parameters.
         """
         save_dict = super().save_agent(f_name)
         save_dict['actor_optimizer'] = self.actor_optimizer.state_dict()

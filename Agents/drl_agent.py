@@ -371,9 +371,24 @@ class RL_Agent(ABC):
         if self.env is not None:
             self.env.close_procs()
             self.env = None
+            torch.distributions.normal
 
 
     def set_intrisic_reward_func(self, func):
+        """
+        sets the agents inner reward function to a custom function that takes state, action, reward and returns reward for the algorithm::
+
+            # Create some agent
+            agent = PPO_Agent(obs_space=env.observation_space, action_space=env.action_space tensorboard_dir = None)
+            def dummy_reward_func(state, action, reward):
+                if state[0] > 0:
+                    return reward + 1
+            agent.set_intrisic_reward_func(dummy_reward_func)
+            # now train normaly
+
+        Args:
+            func (function): a function that takes state, action, reward and returns reward for the algorithm
+        """
         self.r_func = func
 
 
@@ -381,7 +396,17 @@ class RL_Agent(ABC):
         return self.r_func(state, action, reward)
 
     
-    def collect_episode_obs(self, env, max_episode_len=None, num_to_collect_in_parallel=None, env_funcs={"step": "step", "reset": "reset"}):
+    def collect_episode_obs(self, env, max_episode_len=None, num_to_collect_in_parallel=None, env_funcs={"step": "step", "reset": "reset"}) -> float:
+        """
+        Collects observations from the environment
+        Args:
+            env (gym.env): gym environment
+            max_episode_len (int, optional): maximum episode length. Defaults to None.
+            num_to_collect_in_parallel (int, optional): number of parallel environments. Defaults to None.
+            env_funcs (dict, optional): dictionary of env functions mapping to call on the environment. Defaults to {"step": "step", "reset": "reset"}.
+        Returns:
+            float: total reward collected
+        """
         # supports run on different env api
         self.reset_rnn_hidden()
         if num_to_collect_in_parallel is None:
@@ -463,9 +488,6 @@ class RL_Agent(ABC):
         rewards_x = functools.reduce(operator.iconcat, rewards, [])
         dones = functools.reduce(operator.iconcat, dones, [])
         truncated = functools.reduce(operator.iconcat, truncated, [])
-        
-        # next_observations = functools.reduce(operator.iconcat, next_observations, [])
-        # next_observations = self.norm_obs(next_observations) # it is normalized in act, so here we save it normlized to replay buffer aswell
 
         self.experience.append(observations, actions, rewards_x, dones, truncated)
         self.reset_rnn_hidden()
