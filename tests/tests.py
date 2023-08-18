@@ -2,11 +2,11 @@ import os
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from rlkit.Agents.explorers import RandomExplorer
-from rlkit.Agents.agent_utils import ObsWraper
-from rlkit.Models import fc, rnn
-from rlkit.Agents.dqn_agent import DQN_Agent
-from rlkit.Agents.ppo_agent import PPO_Agent
+from rlkit.agents.explorers import RandomExplorer
+from rlkit.agents.agent_utils import ObsWraper
+from rlkit.models import fc, rnn
+from rlkit.agents.dqn_agent import DQN_Agent
+from rlkit.agents.ppo_agent import PPO_Agent
 import numpy as np
 import torch
 from rlkit import utils

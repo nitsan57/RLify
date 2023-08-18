@@ -28,12 +28,10 @@ And many more features!
 
 A short summery of curr supported:
 
-| Algorithm  | Discrete action | Continuous action | Recurrent |
-| ---------- | --------------- | ----------------- | --------- |
-| cliped-PPO | Yes             | Yes               | Yes       |
-| DQN (ddqn) | Yes             | No                | Yes       |
-
-In this table, the first column represents the algorithm names (PPO and DQN). The second column indicates whether the algorithm supports discrete actions (Yes) or not (No). The third column indicates whether the algorithm supports continuous actions (Yes) or not (No). The last column represents whether the algorithm supports recurrent architectures (Yes) or not (No).
+| Algorithm  | Discrete action | Continuous action | Recurrent architectures |
+| ---------- | --------------- | ----------------- | ------------------------ |
+| cliped-PPO | Yes             | Yes               | Yes                      |
+| DQN (ddqn) | Yes             | No                | Yes                      |
 
 Please note that the table content is based on general information and may vary depending on the specific implementation or version of the algorithms.
 
@@ -44,7 +42,7 @@ Please note that the table content is based on general information and may vary 
 
 ## Contributions
 
-We welcome contributions! If you're interested in enhancing the features, fixing bugs, or adding new RL algorithms, feel free to open a pull request or issue.
+We welcome contributions! If you're interested in enhancing the features, fixing bugs, or adding new RL algorithms,feel free to open either a pull request or an issue.
 
 ## License
 

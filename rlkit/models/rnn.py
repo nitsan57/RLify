@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-from rlkit.Agents.agent_utils import ObsWraper
+from rlkit.agents.agent_utils import ObsWraper
 from .base_model import AbstractModel
 
 def pack_from_done_indices(data, dones):

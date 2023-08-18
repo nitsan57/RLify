@@ -126,9 +126,6 @@ class PPO_Agent(RL_Agent):
         Args: f_name (str): File name.
         """
         checkpoint = super().load_agent(f_name)
-        self.define_action_space()
-        
-        self.init_models()
         self.policy_nn.load_state_dict(checkpoint['policy_nn'])
         try:
             self.actor_optimizer.load_state_dict(checkpoint['actor_optimizer'])

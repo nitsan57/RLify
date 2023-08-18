@@ -27,7 +27,7 @@ torch.autograd.profiler.profile(False)
 torch.autograd.profiler.emit_nvtx(False)
 import datetime
 
-from rlkit.Models import model_factory
+from rlkit.models import model_factory
 import copy
 
 class RL_Agent(ABC):
@@ -182,6 +182,8 @@ class RL_Agent(ABC):
         if 'model_class' in checkpoint:
             model_class = checkpoint['model_class']
             self.model_class = model_factory.get_model_class(model_class)
+            
+        self.define_action_space()
         self.init_models()
             
 
