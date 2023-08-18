@@ -33,8 +33,6 @@ A short summery of curr supported:
 | cliped-PPO | Yes             | Yes               | Yes                      |
 | DQN (ddqn) | Yes             | No                | Yes                      |
 
-Please note that the table content is based on general information and may vary depending on the specific implementation or version of the algorithms.
-
 ## Work in Progress
 
 - Add support for callbacks
