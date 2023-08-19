@@ -1,7 +1,7 @@
 from tqdm import tqdm
 from abc import ABC, abstractmethod
 import gymnasium as gym
-from rlkit import utils
+from rlify import utils
 from .agent_utils import ExperienceReplay
 from .explorers import Explorer, RandomExplorer
 import numpy as np
@@ -27,7 +27,7 @@ torch.autograd.profiler.profile(False)
 torch.autograd.profiler.emit_nvtx(False)
 import datetime
 
-from rlkit.models import model_factory
+from rlify.models import model_factory
 import copy
 
 class RL_Agent(ABC):

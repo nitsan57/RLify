@@ -2,14 +2,14 @@ import os
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from rlkit.agents.explorers import RandomExplorer
-from rlkit.agents.agent_utils import ObsWraper
-from rlkit.models import fc, rnn
-from rlkit.agents.dqn_agent import DQN_Agent
-from rlkit.agents.ppo_agent import PPO_Agent
+from rlify.agents.explorers import RandomExplorer
+from rlify.agents.agent_utils import ObsWraper
+from rlify.models import fc, rnn
+from rlify.agents.dqn_agent import DQN_Agent
+from rlify.agents.ppo_agent import PPO_Agent
 import numpy as np
 import torch
-from rlkit import utils
+from rlify import utils
 import gymnasium as gym
 
 
@@ -60,7 +60,7 @@ def test_2e2():
     model_class = fc.FC
     model_kwargs = {'embed_dim': 64, 'repeat':2}
     agent = PPO_Agent(obs_space=env.observation_space, action_space=env.action_space, device=device, batch_size=1024, max_mem_size=10**5, num_parallel_envs=4, lr=3e-4, entropy_coeff=0.05, model_class=model_class, model_kwargs=model_kwargs, discount_factor=0.99, tensorboard_dir = None)
-    train_stats = agent.train_n_steps(env=env,n_steps=10000)
+    train_stats = agent.train_n_steps(env=env,n_steps=1000)
     # ++RNN
     env_name = "LunarLander-v2"
     env = gym.make(env_name, render_mode=None, continuous=True)

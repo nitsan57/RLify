@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 
-from rlkit.agents.explorers import Explorer, RandomExplorer
+from rlify.agents.explorers import Explorer, RandomExplorer
 from .agent_utils import ExperienceReplayBeta, ExperienceReplay
 # from .action_spaces_utils import CAW
 from .drl_agent import RL_Agent

@@ -1,4 +1,4 @@
-# RL Kit
+# RLify
 
 RL Kit is a robust and flexible Reinforcement Learning (RL) framework. It provides a rich set of features to facilitate the development, training, and deployment of RL algorithms.
 

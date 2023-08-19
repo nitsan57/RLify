@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from abc import ABC, abstractmethod
 import numpy as np
-from rlkit.agents.agent_utils import ObsShapeWraper
+from rlify.agents.agent_utils import ObsShapeWraper
 
 from .model_factory import models_db
 
