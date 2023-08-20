@@ -71,13 +71,13 @@ class RandomExplorer(Explorer):
 
 class HeuristicExplorer(RandomExplorer):
     """
-    A class for custom exploration methods- defined by user in init heuristic_function(obs) - > action
+    A class for custom exploration methods- defined by user in init heuristic_function(inner_state, obs) - > action
     """
     def __init__(self,heuristic_function, exploration_epsilon=1, eps_end=0.05, eps_dec=1e-2) -> None:
         super().__init__(exploration_epsilon, eps_end, eps_dec)
         """
         Args:
-            heuristic_function: A function that takes in the observation and returns a tuple: the inner state (could be None) and the action to be taken (inner_state, action)
+            heuristic_function: A function that takes in the inner_state, observation and returns a tuple: the inner state (could be None) and the action to be taken (inner_state, action)
         """
         self.heuristic_function = heuristic_function
 
@@ -94,6 +94,6 @@ class HeuristicExplorer(RandomExplorer):
         Call the heuristic function to get the action
 
         """
-        res = self.heuristic_function(obs)
+        res = self.heuristic_function(self.inner_state, obs)
         self.inner_state = res[0]
         return res[1]
