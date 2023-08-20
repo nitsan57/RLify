@@ -3,20 +3,31 @@ from abc import ABC, abstractclassmethod
 
 class Explorer(ABC):
     
-    """Class that acts a linear exploration method"""
+    """Abstrcat Exploration Class"""
     def __init__(self) -> None:
         super().__init__()
+        self.inner_state = None
 
     @abstractclassmethod
     def explore(self):
+        """
+        Returns True if it is an exploration action time step
+        """
         raise NotImplementedError
 
     @abstractclassmethod
     def update(self):
+        """
+        updates the exploration epsilon
+        """
         raise NotImplementedError
 
     @abstractclassmethod
     def act(self, action_space, obs, num_obs):
+        """
+        Responsible for storing an inner state if needed(in self.inner_state attr)
+        Returns the action to be taken
+        """
         raise NotImplementedError
 
 
@@ -37,6 +48,9 @@ class RandomExplorer(Explorer):
         self.exploration_epsilon = self.exploration_epsilon * (1-self.eps_dec) if self.exploration_epsilon > self.eps_end else self.eps_end
 
     def act(self, action_space, obs, num_obs):
+        """
+        Reutns a random action from the action space
+        """
         if np.issubdtype(action_space.dtype, np.integer):
             return self.act_discrete(action_space, obs, num_obs)
         else:
@@ -61,24 +75,25 @@ class HeuristicExplorer(RandomExplorer):
     """
     def __init__(self,heuristic_function, exploration_epsilon=1, eps_end=0.05, eps_dec=1e-2) -> None:
         super().__init__(exploration_epsilon, eps_end, eps_dec)
+        """
+        Args:
+            heuristic_function: A function that takes in the observation and returns a tuple: the inner state (could be None) and the action to be taken (inner_state, action)
+        """
         self.heuristic_function = heuristic_function
 
     def explore(self):
-        """
-        Check if it as exploration action or not
-        """
         if np.random.random() < self.exploration_epsilon:
             return True
         return False
 
     def update(self):
-        """
-        Update the exploration epsilon
-        """
         self.exploration_epsilon = self.exploration_epsilon * (1-self.eps_dec) if self.exploration_epsilon > self.eps_end else self.eps_end
 
     def act(self, action_space, obs, num_obs):
         """
         Call the heuristic function to get the action
+
         """
-        return self.heuristic_function(obs)
+        res = self.heuristic_function(obs)
+        self.inner_state = res[0]
+        return res[1]
