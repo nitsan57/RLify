@@ -6,7 +6,7 @@ RLify is a robust and flexible Reinforcement Learning (RL) framework. It provide
 
 Clone the [repo](https://github.com/nitsan57/RLkit)
 
-Also check the [docs](https://nitsan57.github.io/RLkit-docs/)
+Also check the [docs](https://nitsan57.github.io/RLify-docs/)
 
 For usage examples, please check `getting-started.ipynb`.
 
