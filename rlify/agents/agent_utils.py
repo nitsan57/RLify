@@ -62,7 +62,7 @@ class ObsWraper:
     """
     A class for wrapping observations, the object is roughly a dict of np.arrays or torch.tensors
     """
-    def __init__(self, data: [np.array, torch.tensor]=None, keep_dims: bool=False, tensors: bool=False):
+    def __init__(self, data: (np.array, torch.tensor)=None, keep_dims: bool=False, tensors: bool=False):
         """
         Args:
             data: The data to wrap
