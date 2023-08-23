@@ -4,7 +4,7 @@ import torch.optim as optim
 import numpy as np
 
 from rlify.agents.explorers import Explorer, RandomExplorer
-from .agent_utils import ExperienceReplayBeta, ExperienceReplay
+from .agent_utils import ExperienceReplay
 # from .action_spaces_utils import CAW
 from .drl_agent import RL_Agent
 import adabelief_pytorch
@@ -188,30 +188,26 @@ class DQN_Agent(RL_Agent):
     def _get_dqn_experiences(self):
         """Get a mix of samples, including all last episode- makes sure we dont miss any seen states"""
         random_samples=(not self.model_class.is_rnn)
-        if type(self.experience) in [ExperienceReplayBeta]:
-            # try to get about self.num_parallel_envs game lens
-            observations, actions, rewards, dones, truncated, next_observations = self.experience.sample_random_batch(self.num_parallel_envs*400)
+        # normal exp replay
+        if random_samples:
+            latest_experience_batch = self.experience.get_last_episodes(self.num_parallel_envs)
+
+            last_episode_len = len(latest_experience_batch[0])
+            #50% last episodes, 50% random
+            random_experience_batch = self.experience.sample_random_batch(last_episode_len)
+            observations, actions, rewards, dones, truncated, next_observations = random_experience_batch
+
+            latest_observations, latest_actions, latest_rewards, latest_dones, latest_truncated, latest_next_observations = latest_experience_batch 
+            rand_perm = torch.randperm(2*len(observations))
+            observations = observations.cat(latest_observations)[rand_perm]  #np.concatenate([observations, latest_observations])[rand_perm]
+            actions = np.concatenate([actions, latest_actions])[rand_perm]
+            rewards = np.concatenate([rewards, latest_rewards])[rand_perm]
+            dones = np.concatenate([dones, latest_dones])[rand_perm]
+            truncated = np.concatenate([truncated, latest_truncated])[rand_perm]
+            next_observations = (next_observations.cat(latest_next_observations))[rand_perm]
+
         else:
-            # normal exp replay
-            if random_samples:
-                latest_experience_batch = self.experience.get_last_episodes(self.num_parallel_envs)
-
-                last_episode_len = len(latest_experience_batch[0])
-                #50% last episodes, 50% random
-                random_experience_batch = self.experience.sample_random_batch(last_episode_len)
-                observations, actions, rewards, dones, truncated, next_observations = random_experience_batch
-
-                latest_observations, latest_actions, latest_rewards, latest_dones, latest_truncated, latest_next_observations = latest_experience_batch 
-                rand_perm = torch.randperm(2*len(observations))
-                observations = observations.cat(latest_observations)[rand_perm]  #np.concatenate([observations, latest_observations])[rand_perm]
-                actions = np.concatenate([actions, latest_actions])[rand_perm]
-                rewards = np.concatenate([rewards, latest_rewards])[rand_perm]
-                dones = np.concatenate([dones, latest_dones])[rand_perm]
-                truncated = np.concatenate([truncated, latest_truncated])[rand_perm]
-                next_observations = (next_observations.cat(latest_next_observations))[rand_perm]
-
-            else:
-                observations, actions, rewards, dones, truncated, next_observations = self.experience.get_last_episodes(self.num_parallel_envs)
+            observations, actions, rewards, dones, truncated, next_observations = self.experience.get_last_episodes(self.num_parallel_envs)
         
         actions = torch.from_numpy(actions).to(self.device)
         rewards = torch.from_numpy(rewards).to(self.device)

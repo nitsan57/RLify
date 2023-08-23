@@ -350,8 +350,15 @@ class ObsWraper:
 
 class ExperienceReplay:
     # TODO: support continous infinte env by removeing long seeing states without dones
-    def __init__(self, capacity, obs_shape, continous_mem=False):
-        
+    """
+    A class for storing expriences and sampling from them
+    """
+    def __init__(self, capacity: float, obs_shape: dict, continous_mem: bool=False):
+        """
+        Args:
+            capacity: The max number of samples to store
+            obs_shape: The shape of the obs
+        """
         self.obs_shape = ObsShapeWraper(obs_shape)
         self.capacity = capacity
         self.init_buffers()
@@ -359,10 +366,22 @@ class ExperienceReplay:
 
 
     def __len__(self):
+        """
+        Returns:
+            The current number of samples in the memory
+        """
         return self.curr_size
 
 
-    def append(self, curr_obs, action, reward, done, truncated):
+    def append(self, curr_obs: ObsWraper, actions: np.array, rewards: np.array, dones: np.array, truncateds: np.array):
+        """
+        Appends a new sample to the memory
+        Args:
+            curr_obs: The current observations
+            actions: The action taken
+            rewards: The reward recieved
+            dones: Whether the episode is done
+        """
         # extra_exps
 
         curr_obs = ObsWraper(curr_obs)
@@ -373,21 +392,21 @@ class ExperienceReplay:
         if num_samples > self.capacity:
             self.curr_size = 0
             curr_obs = curr_obs[:self.capacity]
-            action = action[:self.capacity]
-            reward = reward[:self.capacity]
-            done = done[:self.capacity]
-            truncated = truncated[:self.capacity]
-            done[-1] = True
-            truncated[-1] = True
+            actions = actions[:self.capacity]
+            rewards = rewards[:self.capacity]
+            dones = dones[:self.capacity]
+            truncateds = truncateds[:self.capacity]
+            dones[-1] = True
+            truncateds[-1] = True
             num_samples = self.capacity
 
         elif self.curr_size + num_samples > self.capacity and not self.continous_mem:
-            dones = np.where(self.all_buffers[self.dones_index] == True)[0]
-            relevant_dones = np.where(dones > num_samples - free_space)[0]
+            done_indices = np.where(self.all_buffers[self.dones_index] == True)[0]
+            relevant_dones = np.where(done_indices > num_samples - free_space)[0]
             # roll more then memory needed:
 
             relevant_index = relevant_dones[len(relevant_dones)//2]
-            done_index = dones[relevant_index]
+            done_index = done_indices[relevant_index]
             for i in range(len(self.all_buffers)):
                 if i == self.states_index:
                     self.all_buffers[i] = self.all_buffers[i].np_zero_roll(-done_index - 1, inplace=False)
@@ -397,15 +416,21 @@ class ExperienceReplay:
             self.curr_size -= (done_index+1)
 
         self.all_buffers[self.states_index][self.curr_size:self.curr_size + num_samples] = curr_obs
-        self.all_buffers[self.actions_index][self.curr_size:self.curr_size + num_samples] = action
-        self.all_buffers[self.reward_index][self.curr_size:self.curr_size + num_samples] = reward
-        self.all_buffers[self.dones_index][self.curr_size:self.curr_size + num_samples] = done
-        self.all_buffers[self.truncated_index][self.curr_size:self.curr_size + num_samples] = truncated
+        self.all_buffers[self.actions_index][self.curr_size:self.curr_size + num_samples] = actions
+        self.all_buffers[self.reward_index][self.curr_size:self.curr_size + num_samples] = rewards
+        try:
+            self.all_buffers[self.dones_index][self.curr_size:self.curr_size + num_samples] = dones
+        except:
+            import pdb; pdb.set_trace()
+        self.all_buffers[self.truncated_index][self.curr_size:self.curr_size + num_samples] = truncateds
 
         self.curr_size += num_samples
 
 
     def init_buffers(self):
+        """
+        Initializes the buffers
+        """
 
         self.curr_size = 0
         actions_buffer = np.zeros((self.capacity), dtype=np.float32)
@@ -430,11 +455,19 @@ class ExperienceReplay:
 
 
     def clear(self):
+        """
+        Clears the memory
+        """
         self.init_buffers()
 
 
     def get_last_episodes(self, num_episodes):
-        """return all last episode samples, or specified num samples"""
+        """
+        Args:
+            num_episodes: The number of episodes to return
+        Returns:
+            all last episode samples, or specified num samples
+        """
         episode_indices = [0]
         episode_indices.extend(np.where(self.all_buffers[self.dones_index] == True)[
                                0])  # last episode indx is done =1
@@ -478,6 +511,10 @@ class ExperienceReplay:
         return last_samples
 
     def get_all_buffers(self):
+        """
+        Returns:
+            All the buffers
+        """
         buffers = copy.deepcopy(self.all_buffers)
         next_obs = buffers[self.states_index].np_zero_roll(-1, inplace=False)
 
@@ -486,104 +523,68 @@ class ExperienceReplay:
 
 
     def get_buffers_at(self, indices):
+        """
+        Args:
+            indices: The indices to return
+        Returns:
+            The buffers at the given indices
+        """
         buffers = self.get_all_buffers()
         buffers_at = tuple(buff[indices] for buff in buffers)
         return buffers_at
 
 
     def sample_random_batch(self, sample_size):
+        """
+        Args:
+            sample_size: The number of samples to return
+        Returns:
+            A random batch of samples
+        """
         sample_size = min(sample_size, self.curr_size)
         indices = np.random.choice(self.curr_size, sample_size, replace=False)
         return self.get_buffers_at(indices)
 
 
-class ExperienceReplayBeta(ExperienceReplay):
+class ForgettingExperienceReplay(ExperienceReplay):
+    """
+    This class is used to store and sample experience, it forgets old experience in every append.
+    """
     def __init__(self, capacity, obs_shape, continous_mem=False):
-        super().__init__(capacity, obs_shape, continous_mem)
-        self.latest_obs_start_idx = 0
-        self.latest_obs_end_idx = -1
-        self.num_episodes_added = 0
-    
-    def init_buffers(self):
-        super().init_buffers()
-
-
-    def append(self, curr_obs, action, reward, done, truncated):
-        self.num_episodes_added = sum(done)
-        curr_obs = curr_obs
-
-        num_samples = len(curr_obs)
-        if num_samples > self.capacity:
-            self.curr_size = 0
-            curr_obs = curr_obs[:self.capacity]
-            action = action[:self.capacity]
-            reward = reward[:self.capacity]
-            done = done[:self.capacity]
-            truncated = truncated[:self.capacity]
-            num_samples = self.capacity
-
-            self.all_buffers[self.states_index][:] = curr_obs[:self.capacity]
-            self.all_buffers[self.actions_index][:] = action[:self.capacity]
-            self.all_buffers[self.reward_index][:] = reward[:self.capacity]
-            self.all_buffers[self.dones_index][:] = done[:self.capacity]
-            self.all_buffers[self.dones_index][-1] = True
-            self.all_buffers[self.truncated_index][-1] = True
-            self.latest_obs_start_idx = 0
-            self.latest_obs_end_idx = -1
-            
-
-        elif self.curr_size + num_samples > self.capacity and not self.continous_mem:
-            placement_index = np.random.randint(0, self.capacity - num_samples)
-
-            self.all_buffers[self.states_index][placement_index:placement_index + num_samples] = curr_obs
-            self.all_buffers[self.actions_index][placement_index:placement_index + num_samples] = action
-            self.all_buffers[self.reward_index][placement_index:placement_index + num_samples] = reward
-            self.all_buffers[self.dones_index][placement_index:placement_index + num_samples] = done
-            self.all_buffers[self.truncated_index][placement_index:placement_index + num_samples] = truncated
-            self.curr_size = self.capacity
-            self.latest_obs_start_idx = placement_index
-            self.latest_obs_end_idx = placement_index + num_samples
-        elif self.curr_size + num_samples > self.capacity and self.continous_mem:
-            raise NotImplementedError()
-        else:
-            self.all_buffers[self.states_index][self.curr_size:self.curr_size + num_samples] = curr_obs
-            self.all_buffers[self.actions_index][self.curr_size:self.curr_size + num_samples] = action
-            self.all_buffers[self.reward_index][self.curr_size:self.curr_size + num_samples] = reward
-            self.all_buffers[self.dones_index][self.curr_size:self.curr_size + num_samples] = done
-            self.all_buffers[self.truncated_index][self.curr_size:self.curr_size + num_samples] = truncated
-            self.latest_obs_start_idx = self.curr_size
-            self.latest_obs_end_idx = self.curr_size + num_samples
-            self.curr_size += num_samples
-
-
-        
-    def get_last_episodes(self, num_episodes):
-        """return all last episode samples, or specified num samples"""
-
-        assert self.num_episodes_added == num_episodes, "change expericne to deal with variating requests of latsets episodes"
-        buffers = self.get_all_buffers()
-        return [buff[self.latest_obs_start_idx:self.latest_obs_end_idx]
-                            for buff in buffers]
-
-
-class ForgettingExperienceReplayBeta(ExperienceReplayBeta):
-    def __init__(self, capacity, obs_shape, continous_mem=False):
+        """
+        Args:
+            capacity: The capacity of the replay buffer.
+            obs_shape: The shape of the observations.
+            continous_mem: If true, the replay buffer will be continous, meaning that the oldest samples will be overwritten.
+        """
         super().__init__(capacity, obs_shape, continous_mem)
 
 
     def init_buffers(self):
+        """
+        Initializes the buffers.
+        """
         super().init_buffers()
 
 
-    def append(self, curr_obs, action, reward, done, truncated):
+    def append(self, curr_obs: ObsWraper, actions: np.array, rewards: np.array, dones: np.array, truncateds: np.array):
+        """
+        Appends a new sample to the memory.
+        Args:
+            curr_obs: The current observations.
+            actions: The action taken.
+            rewards: The reward recieved.
+            dones: Whether the episode is done.
+        """
+
         num_samples = len(curr_obs)
-        self.num_episodes_added = sum(done)
+        self.num_episodes_added = sum(dones)
         curr_obs = ObsWraper(curr_obs)
         self.all_buffers[self.states_index] = curr_obs #np.array(curr_obs).astype(np.float32)
-        self.all_buffers[self.actions_index]= np.array(action).astype(np.float32)
-        self.all_buffers[self.reward_index]= np.array(reward).astype(np.float32)
-        self.all_buffers[self.dones_index] = np.array(done).astype(np.float32)
-        self.all_buffers[self.truncated_index] = np.array(truncated).astype(np.float32)
+        self.all_buffers[self.actions_index]= np.array(actions).astype(np.float32)
+        self.all_buffers[self.reward_index]= np.array(rewards).astype(np.float32)
+        self.all_buffers[self.dones_index] = np.array(dones).astype(np.float32)
+        self.all_buffers[self.truncated_index] = np.array(truncateds).astype(np.float32)
         self.curr_size = num_samples
 
 
@@ -592,40 +593,13 @@ class ForgettingExperienceReplayBeta(ExperienceReplayBeta):
         return self.get_all_buffers()
         
 
-# class UniqueExperienceReplay(ExperienceReplay):
-#     # TODO: support continous infinte env by removeing long seeing states without dones
-#     def __init__(self, capacity, obs_shape, continous_mem=False, unique=False):
-#         super().__init__(capacity, obs_shape, continous_mem, unique)
-    
-#     def init_buffers(self):
-#         super().init_buffers()
-#         # self.priority = np.zeros((self.capacity), dtype=np.int32)
-#         # self.all_buffers.append(self.priority)
-#         # self.priority_index = len(self.all_buffers)-1 # last buffer
-
-#     def append(self, curr_obs, action, reward, done, truncated, next_obs):
-#         super().append(curr_obs, action, reward, done, truncated, next_obs)
-#         new_state, new_index = np.unique(self.all_buffers[self.states_index], return_index=True)
-#         for buff in self.all_buffers:
-#             buff = buff[new_index]
-#         self.curr_size = len(new_index)
-
-
-
-# class PriorityExperienceReplay(ExperienceReplay):
-#     # TODO: support continous infinte env by removeing long seeing states without dones
-#     def __init__(self, capacity, obs_shape, continous_mem=False, unique=False):
-#         super().__init__(capacity, obs_shape, continous_mem, unique)
-    
-#     def init_buffers(self):
-#         super().init_buffers()
-#         self.value_error = np.zeros((self.capacity), dtype=np.float32)
-
-#     def append(self, curr_obs, action, reward, done, truncated, next_obs):
-#         super().append(curr_obs, action, reward, done, truncated, next_obs)
-        
-
 def worker(env, conn):
+    """
+    This function is used to run an environment in a separate process.
+    Args:
+        env: The environment to run.
+        conn: The connection to the main process.
+    """
     proc_running = True
 
     done = False
@@ -646,18 +620,6 @@ def worker(env, conn):
         elif (cmd == "reset"):
             conn.send(env.reset())
 
-        # elif (cmd == "clear_env"):
-        #     next_state = env.clear_env()
-        #     conn.send(next_state)
-
-        # elif (cmd == "step_generator"):
-        #     next_state, reward, done, _ = env.step_generator(msg)
-        #     conn.send((next_state, reward, done, _))
-
-        # elif (cmd == "sample_random_state"):
-        #     state = env.sample_random_state()
-        #     conn.send(state)
-
         elif(cmd == "get_env"):
             conn.send(env)
 
@@ -674,7 +636,16 @@ def worker(env, conn):
 
 
 class ParallelEnv():
-    def __init__(self, env, num_envs, for_val=False):
+    """
+    This class is used to run multiple environments in parallel.
+    """
+    def __init__(self, env: gym.Env, num_envs: int, for_val: bool=False):
+        """
+        Args:
+            env: The environment to run in parallel.
+            num_envs: The number of environments to run in parallel.
+            for_val: If true, the environments will be run in a fixed order to allow for deterministic evaluation.
+        """
         self.num_envs = num_envs
         if num_envs > 1:
             self.p_env = ParallelEnv_m(env, num_envs, for_val)
@@ -685,33 +656,55 @@ class ParallelEnv():
         self.p_env.close_procs()
     
     def change_env(self, env):
+        """
+        Changes the environment to run in parallel.
+        Args:
+            env: The new environment.
+        """
         self.p_env.change_env(env)
 
     def get_envs(self):
+        """
+        Returns:
+            A list of the environments.
+        """
         return self.p_env.get_envs()
 
     def reset(self):
+        """
+        Resets the environments.
+        """
         return self.p_env.reset()
 
     def step(self, actions):
+        """
+        Takes a step in the environments.
+        Args:
+            actions: The actions (n, action_shape) to take in the environments.
+        """
         return self.p_env.step(actions)
 
-    def step_generator(self, actions):
-        return self.p_env.step_generator(actions)
-
-    def clear_env(self):
-        return self.p_env.clear_env()
-
     def close_procs(self):
+        """
+        Closes the processes.
+        """
         self.p_env.close_procs()
 
     def render(self):
+        """
+        Renders the environments. - not supported for multi envs - renders just the base env - good for single env case
+        """
         self.p_env.render()
 
 
 class ParallelEnv_m():
     def __init__(self, env, num_envs, for_val=False):
-
+        """
+        Args:
+            env: The environment to run in parallel.
+            num_envs: The number of environments to run in parallel.
+            for_val: If true, the environments will be run in a fixed order to allow for deterministic evaluation.
+        """
         self.num_envs = num_envs
         self.process = namedtuple("Process", field_names=[
                                   "proc", "connection"])
@@ -727,21 +720,38 @@ class ParallelEnv_m():
 
 
     def change_env(self, env):
+        """
+        Changes the environment to run in parallel.
+        Args:
+            env: The new environment.
+        """
         [p.connection.send(("change_env", copy.deepcopy(env))) for p in self.comm]
 
 
     def get_envs(self):
+        """
+        Returns:
+            A list of the environments.
+        """
         [p.connection.send(("get_env", "")) for p in self.comm]
         res = [p.connection.recv() for p in self.comm]
         return res
 
 
     def reset(self):
+        """
+        Resets the environments.
+        """
         [p.connection.send(("reset", "")) for p in self.comm]
         res = [p.connection.recv() for p in self.comm]
         return res
 
     def step(self, actions):
+        """
+        Takes a step in the environments.
+        Args:
+            actions: The actions (n, action_shape) to take in the environments.
+        """
         # send actions to envs
         [p.connection.send(("step", action)) for i, p, action in zip(
             range(self.num_envs), self.comm, actions)]
@@ -759,29 +769,10 @@ class ParallelEnv_m():
     def render(self):
         print('Cant draw parallel envs [WIP]')
 
-    # def step_generator(self, actions):
-    #     # send actions to envs
-    #     [p.connection.send(("step_generator", action)) for i, p, action in zip(
-    #         range(self.num_envs), self.comm, actions)]
-
-        # Receive response from envs.
-        # res = [p.connection.recv() for p in self.comm]
-        # next_states, rewards, dones, _ = zip(*res)
-        # rewards = np.array(rewards)
-        # dones = np.array(dones)
-        # return next_states, rewards, dones, np.array(_)
-
-    # def clear_env(self):
-    #     [p.connection.send(("clear_env", "")) for p in self.comm]
-    #     res = [p.connection.recv() for p in self.comm]
-    #     return res
-
-    # def sample_random_state(self):
-    #     [p.connection.send(("sample_random_state", "")) for p in self.comm]
-    #     res = [p.connection.recv() for p in self.comm]
-    #     return
-
     def close_procs(self):
+        """
+        Closes the processes.
+        """
         # print("closed procs of env")
         for p in self.comm:
             try:
@@ -792,23 +783,45 @@ class ParallelEnv_m():
 
 
 class SingleEnv_m():
+    """
+    This class is used to run a single environment.
+    """
     def __init__(self, env):
+        """
+        Args:
+            env: The environment to run in parallel.
+        """
         # print(env.game_index)
         self.env = copy.deepcopy(env)
         self.num_envs = 1
 
     def change_env(self, env):
+        """
+        Changes the environment to run.
+        """
         self.env = env
 
     def get_envs(self):
+        """
+        Returns:
+            A list of the environments - list with single item in this case.
+        """
         return [self.env]
 
     def reset(self):
+        """
+        Resets the environment.
+        """
         s,info = self.env.reset()
         
         return [(np.array(s, ndmin=1), info)]
 
     def step(self, actions):
+        """
+        Takes a step in the environment.
+        Args:
+            actions: The actions (1, action_shape) to take in the environment.
+        """
         action = None
         try:
           iter(actions)
@@ -823,21 +836,15 @@ class SingleEnv_m():
         trunc = np.array(trunc, ndmin=1)
         return next_states, rewards, terminated, trunc, _
 
-    # def step_generator(self, actions):
-    #     next_states, rewards, dones, _ = self.env.step_generator(actions)
-    #     next_states = next_states[np.newaxis, :]
-    #     rewards = np.array(rewards).reshape(1, 1)
-    #     dones = np.array(dones).reshape(1, 1)
-    #     return next_states, rewards, dones, _
-
-    # def clear_env(self):
-        # return [self.env.clear_env()]
-
-    # def sample_random_state(self):
-    #     return [self.env.sample_random_state()]
 
     def render(self):
+        """
+        Renders the environment.
+        """
         self.env.render()
 
     def close_procs(self):
+        """
+        Closes the processes[actually is a noop in this case].
+        """
         pass
