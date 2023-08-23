@@ -59,7 +59,17 @@ class ObsShapeWraper(dict):
 
 
 class ObsWraper:
-    def __init__(self, data=None, keep_dims=False, tensors=False):
+    """
+    A class for wrapping observations, the object is roughly a dict of np.arrays or torch.tensors
+    """
+    def __init__(self, data: [np.array, torch.tensor]=None, keep_dims: bool=False, tensors: bool=False):
+        """
+        Args:
+            data: The data to wrap
+            keep_dims: Whether to keep the dimensions of the data
+            tensors: Whether to keep the data in tensor
+        """
+
         self.obj_constructor = None
         self.len = 0
         self.data = {}
@@ -117,6 +127,9 @@ class ObsWraper:
 
 
     def update_shape(self):
+        """
+        Updates the shape of the object
+        """
         for k, v in self.items():
             try:
                 self.shape[k] = v.shape
@@ -128,6 +141,11 @@ class ObsWraper:
 
 
     def init_from_list_obsWrapper_obs(self, obs_list):
+        """
+        Initializes from a list of ObsWraper objects
+        Args:
+            obs_list: The list of ObsWraper objects
+        """
         obj_constructor = obs_list[0].obj_constructor
         keys = list(obs_list[0].keys())
        
@@ -149,6 +167,11 @@ class ObsWraper:
 
     
     def init_from_list_generic_data(self, obs_list):
+        """
+        Initializes from a list of generic data
+        Args:
+            obs_list: The list of generic data
+        """
         # get class in a generic way
         if torch.is_tensor(obs_list[0]):
             self.obj_constructor = torch.tensor
@@ -165,10 +188,19 @@ class ObsWraper:
 
 
     def _init_from_none_(self):
+        """
+        Initializes an object without data
+        """
         self.__init__({})
 
 
     def __setitem__(self, key, value):
+        """
+        Sets an item in the object
+        Args:
+            key: The key to set
+            value: The value to set
+        """
         if type(key) is str:
             self.data[key] = value
             len_v = len(value)
@@ -187,10 +219,20 @@ class ObsWraper:
 
 
     def __iter__(self):
+        """
+        Returns:
+            an iterator over the object
+        """
         return iter(self.data)
 
 
     def __getitem__(self, key):
+        """
+        Args:
+            key: The key to get
+        Returns:
+            The relevant item in respect to the key
+        """
         if self.obj_constructor == torch.tensor:
             return self.slice_tensors(key)
         if type(key) is str:
@@ -206,6 +248,12 @@ class ObsWraper:
 
     
     def slice_tensors(self, key):
+        """
+        Args:
+            key: The key to get
+        Returns:
+            The sliced tensors
+        """
         if type(key) is str:
             return self.data[key]
         temp_dict = {}
@@ -219,22 +267,41 @@ class ObsWraper:
 
 
     def keys(self):
+        """
+        Returns:
+            the keys of the object
+        """
         return self.data.keys()
 
 
     def items(self):
+        """
+        Returns:
+            the items of the object
+        """
         return self.data.items()
 
 
     def values(self):
+        """
+        Returns:
+            the values of the object
+        """
         return self.data.values()
 
 
     def __len__(self):
+        """
+        Returns:
+            The length of the object
+        """
         return self.len
 
 
     def __str__(self) -> str:
+        """
+        Returns the string representation of the object
+        """
         return self.data.__str__()
 
 
@@ -243,7 +310,12 @@ class ObsWraper:
 
 
     def __mul__(self, other):
-
+        """
+        Multiplies the object by another object
+        Args:
+            other: The other object to multiply by
+            multiplies key by key using <*> pointwise operator 
+        """
         temp_dict = {}
         for k, v in self.data.items():
             temp_dict[k] = v * other[k]
@@ -251,12 +323,21 @@ class ObsWraper:
 
 
     def __add__(self, other):
+        """
+        Adds the object by another object
+        Args:
+            other: The other object to add by
+            adds key by key using <+> pointwise operator
+        """
         temp_dict = {}
         for k, v in self.data.items():
             temp_dict[k] = v + other[k]
         return ObsWraper(temp_dict, keep_dims=True)
 
     def __neg__(self):
+        """
+        Negates the object
+        """
         temp_dict = {}
         for k, v in self.data.items():
             temp_dict[k] = -v
@@ -264,6 +345,12 @@ class ObsWraper:
 
 
     def __sub__(self, other):
+        """
+        Subtracts the object by another object
+        Args:
+            other: The other object to subtract by
+            subtracts key by key using <-> pointwise operator
+        """
         temp_dict = {}
         for k, v in self.data.items():
             temp_dict[k] = v - other[k]
@@ -271,6 +358,12 @@ class ObsWraper:
     
 
     def __truediv__(self, other):
+        """
+        Divides the object by another object
+        Args:
+            other: The other object to divide by
+            divides key by key using </> pointwise operator
+        """
         temp_dict = {}
         for k, v in self.data.items():
             temp_dict[k] = v / other[k]
@@ -278,6 +371,12 @@ class ObsWraper:
 
 
     def get_as_tensors(self, device='cpu'):
+        """
+        Args:
+            device: The device to put the tensors on
+        Returns:
+            The object as tensors
+        """
         temp_dict = {}
         for k, v in self.data.items():
             temp_dict[k] = torch.tensor(v).float().to(device).float()
@@ -285,6 +384,14 @@ class ObsWraper:
 
 
     def np_cat(self, other, axis=0):
+        """
+        Concatenates the object by another object
+        Args:
+            other: The other object to concatenate by
+            concatenates key by key using np.concatenate
+        Returns:
+            The concatenated object
+        """
         temp_dict = {}
         for k, v in self.data.items():
             temp_dict[k] = np.concatenate([self.data[k], other[k]], axis)
@@ -292,6 +399,12 @@ class ObsWraper:
 
 
     def np_append(self, other, axis=0):
+        """
+        Appends the object by another object
+        Args:
+            other: The other object to append by
+            appends key by key
+        """
         if self.len != 0:
             for k, v in self.data.items():
                 self.data[k] = np.concatenate([self.data[k], other[k]], axis)
@@ -301,6 +414,12 @@ class ObsWraper:
             self.len = other.len
         
     def cat(self, other, axis=0):
+        """
+        Concatenates the object by another object
+        Args:
+            other: The other object to concatenate by
+            concatenates key by key
+        """
         temp_dict = {}
         for k, v in self.data.items():
             if torch.is_tensor(v):
@@ -310,24 +429,14 @@ class ObsWraper:
         return ObsWraper(temp_dict)
 
 
-    # def torch_cat(self, other, axis=0):
-    #     temp_dict = {}
-    #     for k, v in self.data.items():
-    #         temp_dict[k] = torch.cat([self.data[k], other[k]], axis)
-    #     return ObsWraper(temp_dict)
-
-
-    # def torch_append(self, other, axis=0):
-    #     if self.len != 0:
-    #         for k, v in self.data.items():
-    #             self.data[k] = torch.cat([self.data[k], other[k]], axis)
-    #         self.len = self.len + len(other)
-    #     else:
-    #         self.data = copy.deepcopy(other.data)
-    #         self.len = other.len
-
     def np_zero_roll(self, indx, inplace=False):
-        """Rolls the data by indx and fills the empty space with zeros - only on axis 0"""
+        """Rolls the data by indx and fills the empty space with zeros - only on axis 0
+        Args:
+            indx: The index to roll by
+            inplace: Whether to do the roll inplace
+        Returns:
+            The rolled object
+        """
         temp_dict = {}
         for k, v in self.data.items():
             temp_dict[k] = np.concatenate([self.data[k][-indx:], np.zeros_like(self.data[k][:-indx])])
@@ -338,6 +447,15 @@ class ObsWraper:
         
 
     def np_roll(self, indx, axis=0, inplace=False):
+        """
+        Rolls the data by indx
+        Args:
+            indx: The index to roll by
+            axis: The axis to roll on
+            inplace: Whether to do the roll inplace
+        Returns:
+            The rolled object
+        """
         temp_dict = {}
         for k, v in self.data.items():
             temp_dict[k] = np.roll(self.data[k], indx, axis=axis)

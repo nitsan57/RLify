@@ -1,7 +1,6 @@
 *.pyc
 */__pycache__/*
-docs
-docs/*
 *.pt
 tensorboard/
 .vscode/
+html/
