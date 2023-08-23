@@ -6,9 +6,19 @@ import torch.nn.functional as F
 
 
 class MCAW():
-    def __init__(self, low, high, locs_scales) -> None:
+    """
+    Multivariate Continuous Action Space wrapper
+    """
+
+    def __init__(self, lows: (list, np.array), highs: (list, np.array), locs_scales: torch.tensor) -> None:
+        """
+        Args:
+            low (list): the lower bound of the actions
+            high (list): the higher bound of the actions
+            locs_scales (torch.tensor): the mean and scale of all the actions
+        """
         self.device = locs_scales.device
-        num_models = len(low)
+        num_models = len(lows)
         self.models = []
         
         self.out_shape = locs_scales.shape[0], num_models # sample or get locs
@@ -17,11 +27,17 @@ class MCAW():
         sigma_dims = np.arange(num_models, 2*num_models)
 
         for i in range(num_models):
-            model = CAW(low[i], high[i], locs_scales[:, mu_dims[i]], locs_scales[:, sigma_dims[i]])
+            model = CAW(lows[i], highs[i], locs_scales[:, mu_dims[i]], locs_scales[:, sigma_dims[i]])
             self.models.append(model)
             
 
     def sample(self, sample_shape=torch.Size()):
+        """
+        Args:
+            sample_shape (torch.Size): the shape of the sample
+        Returns:
+            a tensor of shape (b, n_actions, sample_shape)
+        """
         res = []
         for i,m in enumerate(self.models):
             res.append(m.sample(sample_shape))
@@ -29,6 +45,13 @@ class MCAW():
     
     
     def log_prob(self, actions):
+        """
+        calculates the log prob of each action
+        Args:
+            actions (torch.tensor): a tensor of shape (b, n_actions)
+        Returns:
+            a tensor of shape (b, n_actions)
+        """
         res = []
         for i,m in enumerate(self.models):
             res.append(m.log_prob(actions[:, i]))
@@ -53,7 +76,11 @@ class MCAW():
 
 
     def entropy(self):
-        # res = torch.zeros(self.out_shape)
+        """
+        caculates the mean entropy of all the actions
+        Returns:
+            a tensor of shape (b, 1)
+        """
         m_e = 0 
         for i,m in enumerate(self.models):
             m_e = m.entropy() + m_e
@@ -61,9 +88,16 @@ class MCAW():
 
         
 class CAW(Normal):
+    """
+    Continuous Action Wrapper
+    """
     def __init__(self, low, high, loc, scale) -> None:
         """
-
+        Args:
+            low (float): the lower bound of the action
+            high (float): the higher bound of the action
+            loc (torch.tensor): the mean of the action
+            scale (torch.tensor): the scale of the action
         """
         low, high = float(low), float(high)
         self.low = low
@@ -73,18 +107,20 @@ class CAW(Normal):
 
         loc = torch.tanh(loc)*coeff+bias
         scale = torch.nn.functional.sigmoid(scale)
-        # scale = torch.clamp(scale, 1e-4, 1)
-        # if scale.shape[0] > 10:
-        #     print(np.round(scale[0].item(), 3), np.round(loc[0].item(), 3))
         
         super().__init__(loc, scale)
         # self.sample_activation = torch.nn.Identity() #torch.nn.Tanh() #torch.nn.Sigmoid()
 
 
     def sample(self, sample_shape=torch.Size()):
+        """
+        Args:
+            sample_shape (torch.Size): the shape of the sample
+        Returns:
+            a tensor of shape (b, sample_shape)
+        """
         sample = super().sample(sample_shape)
         # self.sample_activation(sample)
-        # print(sample[0], torch.clamp(sample, self.low, self.high)[0])
         return torch.clamp(sample, self.low, self.high)
     
     # @property
@@ -122,13 +158,24 @@ class MDA():
             
 
     def sample(self, sample_shape=torch.Size()):
+        """
+        Returns:
+            a tensor of shape (b, n_actions, sample_shape)
+        """
         res = []
         for i,m in enumerate(self.models):
             res.append(m.sample(sample_shape))
         return torch.stack(res, -1)
     
     
-    def log_prob(self, actions):
+    def log_prob(self, actions: torch.tensor):
+        """
+        calculates the log prob of each action
+        Args:
+            actions (torch.tensor): a tensor of shape (b, n_actions)
+        Returns:
+            a tensor of shape (b, n_actions)
+        """
         res = []
         for i,m in enumerate(self.models):
             res.append(m.log_prob(actions[:, i]))
@@ -136,6 +183,10 @@ class MDA():
     
     @property
     def probs(self):
+        """
+        Returns:
+            a tensor of shape (b, n_actions)
+        """
         res = []
         for i,m in enumerate(self.models):
             res.append(m.probs)
