@@ -21,8 +21,6 @@ class FC(AbstractModel):
     
 
     def forward(self, x, d=None): # d is for rnn api compability
-        # temp_k = list(x.keys())[0]
-        # device = x[temp_k].data.get_device()
 
         res_dict = dict()
         for k in x:
@@ -37,8 +35,10 @@ class FC(AbstractModel):
             out = layer(res_dict[k])
             res_dict[k] = out
 
+
         res = torch.cat(list(res_dict.values()),1)
         res = self.concat_layer(res)
+        
         out = self.l2(res)
         return out
 

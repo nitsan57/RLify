@@ -61,8 +61,9 @@ class ObsShapeWraper(dict):
 class ObsWraper:
     """
     A class for wrapping observations, the object is roughly a dict of np.arrays or torch.tensors
+    A default key is 'data' for the main data if it in either a np.array or torch.tensor
     """
-    def __init__(self, data: (np.array, torch.tensor)=None, keep_dims: bool=False, tensors: bool=False):
+    def __init__(self, data: (dict, np.array, torch.tensor)=None, keep_dims: bool=True, tensors: bool=False):
         """
         Args:
             data: The data to wrap
@@ -334,6 +335,7 @@ class ObsWraper:
             temp_dict[k] = v + other[k]
         return ObsWraper(temp_dict, keep_dims=True)
 
+
     def __neg__(self):
         """
         Negates the object
@@ -368,6 +370,32 @@ class ObsWraper:
         for k, v in self.data.items():
             temp_dict[k] = v / other[k]
         return ObsWraper(temp_dict, keep_dims=True, tensors=other.tensors)
+
+
+    def unsqueeze(self, dim=0):
+        """
+        Args:
+            dim: The device to put the tensors on
+        Returns:
+            The object as tensors
+        """
+        temp_dict = {}
+        for k, v in self.data.items():
+            temp_dict[k] = v.unsqueeze(dim)
+        return ObsWraper(temp_dict, keep_dims=True, tensors=True)
+    
+
+    def squeeze(self, dim=0):
+        """
+        Args:
+            dim: The device to put the tensors on
+        Returns:
+            The object as tensors
+        """
+        temp_dict = {}
+        for k, v in self.data.items():
+            temp_dict[k] = v.squeeze(dim)
+        return ObsWraper(temp_dict, keep_dims=True, tensors=True)
 
 
     def get_as_tensors(self, device='cpu'):
@@ -930,9 +958,8 @@ class SingleEnv_m():
         """
         Resets the environment.
         """
-        s,info = self.env.reset()
-        
-        return [(np.array(s, ndmin=1), info)]
+        s,info = self.env.reset()        
+        return [(np.array(s, ndmin=2), info)]
 
     def step(self, actions):
         """

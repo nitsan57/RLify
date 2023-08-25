@@ -53,7 +53,6 @@ class PPO_Agent(RL_Agent):
 
 
     def set_train_mode(self):
-        """Set agent in train mode."""
         super().set_train_mode()
         self.policy_nn.train()
         self.critic_nn.train()
@@ -66,9 +65,6 @@ class PPO_Agent(RL_Agent):
 
 
     def init_models(self):
-        """
-        Initialize the neural network models.
-        """
         # self.exp_sigma = self.GSDE()
         # self.exp_sigma.to(self.device)
 
@@ -102,13 +98,6 @@ class PPO_Agent(RL_Agent):
 
 
     def save_agent(self,f_name) -> dict:
-        """
-        Save the agent.
-        Args: 
-            f_name (str): File name.
-        returns: 
-            save_dict (dict): Dictionary of agent parameters.
-        """
         save_dict = super().save_agent(f_name)
         save_dict['actor_optimizer'] = self.actor_optimizer.state_dict()
         save_dict['policy_nn'] = self.policy_nn.state_dict()
@@ -121,10 +110,6 @@ class PPO_Agent(RL_Agent):
 
 
     def load_agent(self,f_name):
-        """
-        Loads the agent weights.
-        Args: f_name (str): File name.
-        """
         checkpoint = super().load_agent(f_name)
         self.policy_nn.load_state_dict(checkpoint['policy_nn'])
         try:
@@ -137,16 +122,11 @@ class PPO_Agent(RL_Agent):
 
 
     def reset_rnn_hidden(self,):
-        """reset nn hidden_state"""
         self.policy_nn.reset()
         self.critic_nn.reset()
 
 
     def set_num_parallel_env(self, num_parallel_envs):
-        """
-        Set the number of parallel environments.
-        Args: num_parallel_envs (int): Number of parallel environments.
-        """
         super().set_num_parallel_env(num_parallel_envs)
 
 
@@ -192,8 +172,7 @@ class PPO_Agent(RL_Agent):
         return super().collect_episode_obs(env, max_episode_len, num_to_collect_in_parallel, env_funcs)
 
     
-    def act(self, observations, num_obs=1, extra_info=False):
-        """batched observation only!"""
+    def act(self, observations, num_obs=1, extra_info=False):        
         if self.eval_mode:
             return self.best_act(observations, num_obs=num_obs)
         states = self.pre_process_obs_for_act(observations, num_obs)

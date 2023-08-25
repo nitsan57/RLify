@@ -29,6 +29,15 @@ rlify.agents.ppo\_agent module
    :show-inheritance:
 
 
+rlify.agents.heuristic\_agent module
+------------------------------------
+
+.. automodule:: rlify.agents.heuristic_agent
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
 rlify.agents.explorers module
 -----------------------------
 

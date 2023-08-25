@@ -28,7 +28,7 @@ torch.autograd.profiler.emit_nvtx(False)
 import datetime
 
 from rlify.models import model_factory
-import copy
+from rlify.models import fc
 
 class RL_Agent(ABC):
     """
@@ -38,8 +38,9 @@ class RL_Agent(ABC):
     TRAIN = 0
     EVAL = 1
 
-    def __init__(self, obs_space: gym.spaces, action_space : gym.spaces, max_mem_size: int=10e6, batch_size: int=256, explorer: Explorer = RandomExplorer() , num_parallel_envs: int=4, model_class: object=None, model_kwargs: dict=dict(), lr: float=0.0001, device: str=None, experience_class: object=ExperienceReplay, discount_factor: float=0.99, tensorboard_dir: str = './tensorboard') -> None:
+    def __init__(self, obs_space: gym.spaces, action_space : gym.spaces, max_mem_size: int=int(10e6), batch_size: int=256, explorer: Explorer = RandomExplorer() , num_parallel_envs: int=4, model_class: object=fc.FC, model_kwargs: dict=dict(), lr: float=0.0001, device: str=None, experience_class: object=ExperienceReplay, discount_factor: float=0.99, tensorboard_dir: str = './tensorboard') -> None:
         """
+
         Args:
             obs_space (gym.spaces): observation space of the environment
             action_space (gym.spaces): action space of the environment
@@ -65,8 +66,8 @@ class RL_Agent(ABC):
 
         self.norm_params = {} #copy.copy(norm_params)
         self.model_kwargs = model_kwargs
-        self.obs_space = obs_space #obs_shape
-        self.obs_shape = ObsShapeWraper(obs_space.shape) #obs_shape
+        self.obs_space = obs_space
+        self.obs_shape = ObsShapeWraper(obs_space) #obs_shape
         self.discount_factor = discount_factor
         # norm_params (dict, optional): normalization parameters. Defaults to {} - currently.
         norm_params = {}
@@ -84,9 +85,7 @@ class RL_Agent(ABC):
             self.batch_size = self.num_parallel_envs
 
         self.eval_mode = self.EVAL
-        
         self.experience = experience_class(max_mem_size, self.obs_shape)
-        self.mem_size = max_mem_size
         
         self.device = device if device is not None else utils.init_torch() #default goes to cuda -> cpu' or enter manualy
         
@@ -100,6 +99,7 @@ class RL_Agent(ABC):
     def init_tb_writer(self, tensorboard_dir : str = None):
         """
         Initializes tensorboard writer
+        
         Args:
             tensorboard_dir (str): tensorboard directory
         """
@@ -112,20 +112,32 @@ class RL_Agent(ABC):
 
     @abstractmethod
     def init_models(self):
+        """
+        Initializes the NN models
+        """
         raise NotImplementedError
 
 
     @abstractmethod
     def update_policy(self, *exp):
+        """
+        Updates the models and according to the agnets logic
+        """
         raise NotImplementedError
     
 
     def get_train_metrics(self):
+        """
+        Returns the training metrics
+        """
         return pd.DataFrame(self.metrics)
         
 
 
     def define_action_space(self):
+        """
+        Defines the action space
+        """
         self.action_dtype = self.action_space.dtype
         
         if np.issubdtype(self.action_dtype, np.integer):           
@@ -143,12 +155,22 @@ class RL_Agent(ABC):
             
 
     def __del__(self):
+        """
+        Destructor
+        """
         self.close_env_procs()
         self.writer.close()
 
 
     @abstractmethod
     def save_agent(self,f_name: str)-> dict:
+        """
+        Saves the agent to a file.
+
+        Args:
+            f_name (str): file name
+        Returns: a dictionary containing the agent's state.
+        """
         save_dict = {
         'agent_type' : self.__class__.__name__,
         'obs_space' : self.obs_space,
@@ -164,6 +186,10 @@ class RL_Agent(ABC):
 
     @abstractmethod
     def load_agent(self, f_name: str):
+        """
+        Loads the agent from a file.
+        Returns: a dictionary containing the agent's state.
+        """
         checkpoint = torch.load(f_name,map_location=self.device)
         self.action_space = checkpoint['action_space']
 
@@ -191,28 +217,67 @@ class RL_Agent(ABC):
 
 
     def set_train_mode(self):
+        """
+        sets the agent to train mode - all models are set to train mode
+        """
         self.reset_rnn_hidden()
         self.eval_mode = self.TRAIN
 
 
     def set_eval_mode(self):
+        """
+        sets the agent to train mode - all models are set to eval mode
+        """
         self.reset_rnn_hidden()
         self.eval_mode = self.EVAL
 
 
-    def train_episodial(self, env, n_episodes, max_episode_len=None, disable_tqdm=False):
+    def train_episodial(self, env: gym.Env, n_episodes: int, max_episode_len: int=None, disable_tqdm: bool=False):
+        """
+        Trains the agent for a given number of episodes
+
+        Args:
+            env (gym.Env): the environment to train on
+            n_episodes (int): number of episodes to train
+            max_episode_len (int, optional): maximum episode length - truncates after that. Defaults to None.
+            disable_tqdm (bool, optional): disable tqdm. Defaults to False.
+        Returns:
+            train rewards
+        """
         if n_episodes < self.num_parallel_envs:
             self.set_num_parallel_env(n_episodes)
         train_r = self._train_n_iters(env, n_episodes, True, max_episode_len=max_episode_len, disable_tqdm=disable_tqdm)
         return train_r
 
 
-    def train_n_steps(self, env, n_steps, max_episode_len=None, disable_tqdm=False):
+    def train_n_steps(self, env: gym.Env, n_steps: int, max_episode_len: int=None, disable_tqdm: bool=False):
+        """
+        Trains the agent for a given number of steps
+
+        Args:
+            env (gym.Env): the environment to train on
+            n_steps (int): number of steps to train
+            max_episode_len (int, optional): maximum episode length - truncates after that. Defaults to None.
+            disable_tqdm (bool, optional): disable tqdm. Defaults to False.
+        Returns:
+            train rewards
+        """
         return self._train_n_iters(env, n_steps, episodes=False, max_episode_len=max_episode_len, disable_tqdm=disable_tqdm)
 
     
-    def _train_n_iters(self, env, n_iters, episodes=False, max_episode_len=None, disable_tqdm=False):
-        """General train function, if episodes is true- each iter is episode, otherwise train steps"""
+    def _train_n_iters(self, env: gym.Env, n_iters: int, episodes: bool=False, max_episode_len: bool=None, disable_tqdm: bool=False):
+        """
+        Trains the agent for a given number of steps
+
+        Args:
+            env (gym.Env): the environment to train on
+            n_iters (int): number of steps/episodes to train
+            episodes (bool, optional): whether to train for episodes or steps. Defaults to False.
+            max_episode_len (int, optional): maximum episode length - truncates after that. Defaults to None.
+            disable_tqdm (bool, optional): disable tqdm. Defaults to False.
+        Returns:
+            train rewards
+        """
         self.set_train_mode()
         
         pbar = tqdm(total=n_iters, leave=None, disable=disable_tqdm)
@@ -258,92 +323,79 @@ class RL_Agent(ABC):
 
 
     def set_num_parallel_env(self, num_parallel_envs):
+        """
+        Sets the number of parallel environments
+
+        Args:
+            num_parallel_envs (int): number of parallel environments
+        """
         assert self.num_parallel_envs <= self.batch_size, f"please provide batch_size>= num_parallel_envs current: {self.batch_size}, {num_parallel_envs},"
         self.num_parallel_envs = num_parallel_envs
 
 
     @abstractmethod
-    def act(self, observations, num_obs=1, extra_info=False):
+    def act(self, observations: np.array, num_obs: int=1, extra_info=False):
+        """
+
+        Args:
+            observations: The observations to act on
+            num_obs: The number of observations to act on
+            extra_info: env extra info
+        Returns:
+            The action to be taken
+        """
         raise NotImplementedError
     
   
     def load_highest_score_agent(self):
+        """
+        Loads the highest score agent from training
+        """
         self.load_agent('/tmp/best_{}.pt'.format(self.id))
 
 
     def get_highest_score_agent_ckpt_path(self):
+        """
+        Returns the path of the highest score agent from training
+        """
         return '/tmp/best_{}.pt'.format(self.id)
         
 
 
     @abstractmethod
     def best_act_discrete(self, observations, num_obs=1, extra_info=False):
+        """
+        The best actions in a discrete action space
+
+        Args:
+            observations: The observations to act on
+            num_obs: The number of observations to act on
+            extra_info: env extra info
+        Returns:
+            The highest probabilty action to be taken in a detrministic way
+        """
         raise NotImplementedError
     
 
     @abstractmethod
     def best_act_cont(self, observations, num_obs=1, extra_info=False):
+        """
+        The best actions in a continiuos action space
+
+        Args:
+            observations: The observations to act on
+            num_obs: The number of observations to act on
+            extra_info: env extra info
+        Returns:
+            The highest probabilty action to be taken in a detrministic way
+        """
         raise NotImplementedError
-
-    def get_seqs_indices_for_pack(self, done_indices):
-        """returns seq_lens, sorted_data_sub_indices"""
-        env_indices = np.zeros_like(done_indices, dtype=np.int32)
-        env_indices[0] = -1
-        env_indices[1:] = done_indices[:-1]
-        all_lens = done_indices - env_indices
-        data_sub_indices = np.array([list(range(env_indices[i]+1, done_indices[i]+1, 1)) for i in range(len(all_lens-1))], dtype=object)
-
-        seq_indices = np.argsort(all_lens, kind='stable')[::-1]
-        sorted_data_sub_indices = data_sub_indices[seq_indices]
-        sorted_data_sub_indices = np.concatenate(sorted_data_sub_indices).astype(np.int32)
-        seq_lens = all_lens[seq_indices]
-        return seq_lens, seq_indices, sorted_data_sub_indices
-
-
-    def pack_from_done_indices(self, data, seq_indices, sorted_seq_lens, done_indices):
-        """returns pakced obs"""
-        assert np.all(np.sort(sorted_seq_lens, kind='stable')[::-1] == sorted_seq_lens)
-        max_colected_len = np.max(sorted_seq_lens)
-
-        packed_obs = ObsWraper()
-        for k in data:
-            obs_shape = data[k][-1].shape
-            temp = []
-            curr_idx = 0
-            for i,d_i in enumerate(done_indices):
-                temp.append(data[k][curr_idx:d_i+1])
-                curr_idx = d_i+1# 
-            
-            temp = [temp[i] for i in seq_indices]
-            max_new_seq_len = max_colected_len
-            new_lens = sorted_seq_lens
-
-            padded_seq_batch = torch.nn.utils.rnn.pad_sequence(temp, batch_first=True)
-            padded_seq_batch = padded_seq_batch.reshape((self.num_parallel_envs, max_new_seq_len, np.prod(obs_shape)))
-            pakced_states = torch.nn.utils.rnn.pack_padded_sequence(padded_seq_batch, lengths=np.array(new_lens), batch_first=True)
-            packed_obs[k] = pakced_states
-
-        return packed_obs
-
-
-    def pack_sorted_data(self, sorted_data, sorted_seq_lens):
-        states = ObsWraper()
-        for k in sorted_data:
-            tmp = [torch.from_numpy(x).float() for x in sorted_data[k]]
-            states[k] = self.pack_sorted_data_h(tmp, sorted_seq_lens).to(self.device)
-        return states
-
-
-    def pack_sorted_data_h(self, data, seq_lens):
-        batch_size = len(data)
-        max_seq_len = np.max(seq_lens).astype(np.int32)
-        padded_seq_batch = torch.nn.utils.rnn.pad_sequence(data, batch_first=True)
-        padded_seq_batch = padded_seq_batch.reshape((batch_size, max_seq_len, np.prod(data[-1].shape)))
-        p_data = torch.nn.utils.rnn.pack_padded_sequence(padded_seq_batch, lengths=seq_lens, batch_first=True)
-        return p_data
 
 
     def norm_obs(self, observations):
+        """
+        Normalizes the observations according to the pre given normalization parameters [future api - currently not availble] 
+        """
         # ObsWraper(observations)
         return observations
         if type(observations) == list:
@@ -351,36 +403,44 @@ class RL_Agent(ABC):
         return  (observations - self.norm_params['mean']) / self.norm_params['std']
 
 
-    def pre_process_obs_for_act(self, observations, num_obs):
+    def pre_process_obs_for_act(self, observations: np.array, num_obs: int):
+        """
+        Pre processes the observations for act
+
+        Args:
+            observations: The observations to act on
+            num_obs: The number of observations to act on
+        Returns:
+            The pre processed observations an ObsWraper object with the right dims
+        """
         observations = ObsWraper(observations)
         
         observations = self.norm_obs(observations)
         len_obs = len(observations)
 
-        
-        if num_obs == 1 and self.obs_shape == observations.shape:
-            # BATCH=1
-            len_obs = 1
-            observations = observations[np.newaxis, :]
 
-        elif num_obs != len_obs and num_obs != 1:
+        if num_obs != len_obs:
             raise Exception(f"number of observations do not match real observation num obs: {num_obs}, vs real len: {len(observations)}")
-        # return observations
-        # if self.rnn:
-        #     seq_lens = np.ones(len_obs)
-        #     states = self.pack_sorted_data(observations, seq_lens)
-        #     # states = torch.from_numpy(observations).to(self.device)
-        # else:
         states = observations.get_as_tensors(self.device)
         return states
 
 
-    def return_correct_actions_dim(self, selected_actions, num_obs):
-        selected_actions = selected_actions.reshape(num_obs,*self.action_space.shape)
-        return selected_actions.astype(self.action_dtype)
+    def return_correct_actions_dim(self, actions: np.array, num_obs: int):
+        """
+        Returns the correct actions dimention
+
+        Args:
+            actions: The selected actions
+            num_obs: The number of observations to act on
+        """
+        actions = actions.reshape(num_obs,*self.action_space.shape)
+        return actions.astype(self.action_dtype)
 
 
     def close_env_procs(self):
+        """
+        Closes the environment processes
+        """
         if self.env is not None:
             self.env.close_procs()
             self.env = None
@@ -405,13 +465,17 @@ class RL_Agent(ABC):
         self.r_func = func
 
 
-    def intrisic_reward_func(self, state, action, reward):
+    def intrisic_reward_func(self, state: np.array, action: np.array, reward: np.array):
+        """
+        Calculates the agents inner reward 
+        """
         return self.r_func(state, action, reward)
 
     
     def collect_episode_obs(self, env, max_episode_len=None, num_to_collect_in_parallel=None, env_funcs={"step": "step", "reset": "reset"}) -> float:
         """
         Collects observations from the environment
+
         Args:
             env (gym.env): gym environment
             max_episode_len (int, optional): maximum episode length. Defaults to None.
@@ -462,6 +526,7 @@ class RL_Agent(ABC):
             
             if self.explorer.explore():
                 explore_action = self.explorer.act(self.action_space, latest_observations, num_to_collect_in_parallel)
+                assert explore_action.shape[0] == num_to_collect_in_parallel, f"The explorer heuristic functions does not returns the correct number of actions (batch dim) expected: {num_to_collect_in_parallel}, got: {explore_action.shape[0]}"
                 current_actions = self.return_correct_actions_dim(explore_action, num_to_collect_in_parallel)
             else:
                 current_actions = self.act(latest_observations, num_to_collect_in_parallel)
@@ -510,17 +575,27 @@ class RL_Agent(ABC):
 
     @abstractmethod
     def reset_rnn_hidden(self,):
-        """if agent uses rnn, this callback is called in many places so please impliment it"""
+        """if agent uses rnn, when the hidden states are reset.
+        this callback is called in many places so please impliment it in you agent"""
         raise NotImplementedError
 
 
     @abstractmethod
-    def get_last_collected_experiences(self, number_of_episodes):
+    def get_last_collected_experiences(self, number_of_episodes: int):
+        """
+        returns the last collected experiences
+
+        Args:
+            number_of_episodes (int): number of episodes to return
+        """
         # Mainly for paired alg
         raise NotImplementedError
 
     @abstractmethod
     def clear_exp(self):
+        """
+        clears the experience replay buffer
+        """
         self.experience.clear()
     
 

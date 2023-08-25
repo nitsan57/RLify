@@ -93,11 +93,13 @@ class HeuristicExplorer(RandomExplorer):
     def __init__(self,heuristic_function, exploration_epsilon=1, eps_end=0.05, eps_dec=1e-2) -> None:
         """
         Args:
-            heuristic_function: A function that takes in the inner_state, observation and returns a tuple: the inner state (could be None) and the action to be taken (inner_state, action)
+            heuristic_function: A function that takes in the inner_state, observation (ObsWraper) and returns a tuple: (inner_state, action) the inner state (could be None) and the action to be taken,
+                            please notice that the actions shape is b,n_actions,action_dim
         """
         super().__init__(exploration_epsilon, eps_end, eps_dec)
-
+        self.inner_state = None
         self.heuristic_function = heuristic_function
+
 
     def explore(self):
         if np.random.random() < self.exploration_epsilon:
