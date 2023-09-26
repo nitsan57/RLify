@@ -2,7 +2,6 @@ from tqdm import tqdm
 from abc import ABC, abstractmethod
 import gymnasium as gym
 from rlify import utils
-from .agent_utils import ExperienceReplay
 from .explorers import Explorer, RandomExplorer
 import numpy as np
 import functools
@@ -85,7 +84,6 @@ class RL_Agent(ABC):
             self.batch_size = self.num_parallel_envs
 
         self.eval_mode = self.EVAL
-        self.experience = experience_class(max_mem_size, self.obs_shape)
         
         self.device = device if device is not None else utils.init_torch() #default goes to cuda -> cpu' or enter manualy
         
@@ -93,6 +91,8 @@ class RL_Agent(ABC):
         self.action_space = action_space
         self.define_action_space()
         self.init_models()
+        self.experience = experience_class(max_mem_size, self.obs_shape, self.n_actions)
+
         self.metrics = defaultdict(list)
 
 
@@ -413,8 +413,8 @@ class RL_Agent(ABC):
         Returns:
             The pre processed observations an ObsWraper object with the right dims
         """
-        observations = ObsWraper(observations)
         
+        observations = ObsWraper(observations)
         observations = self.norm_obs(observations)
         len_obs = len(observations)
 
@@ -535,7 +535,6 @@ class RL_Agent(ABC):
             next_obs, reward, terminated, trunc, info = step_function(current_actions)
 
             for i in relevant_indices:
-
                 actions[i].append(current_actions[i])
                 intrisic_reward = self.intrisic_reward_func(latest_observations[i], current_actions[i], reward[i])
                 rewards[i].append(intrisic_reward)
@@ -559,14 +558,12 @@ class RL_Agent(ABC):
 
             latest_observations = [observations[i][-1] for i in range(num_to_collect_in_parallel)]
             
-
         observations = functools.reduce(operator.iconcat, observations, [])
         observations = self.norm_obs(observations) # it is normalized in act, so here we save it normlized to replay buffer aswell
         actions = functools.reduce(operator.iconcat, actions, [])
         rewards_x = functools.reduce(operator.iconcat, rewards, [])
         dones = functools.reduce(operator.iconcat, dones, [])
         truncated = functools.reduce(operator.iconcat, truncated, [])
-
         self.experience.append(observations, actions, rewards_x, dones, truncated)
         self.reset_rnn_hidden()
         self.explorer.update()
@@ -600,9 +597,19 @@ class RL_Agent(ABC):
     
 
     def run_env(self, env, best_act=True, num_runs=1):
-        "runs env in eval"
+        """
+        Runs the environment with the agent in eval mode
+        Args:
+
+            env (gym.Env): the environment to run
+            best_act (bool, optional): whether to use the best action or the agent's action. Defaults to True.
+            num_runs (int, optional): number of runs. Defaults to 1.
+
+        """
+        
         self.set_eval_mode()
-        env = ParallelEnv(env, 1)
+        num_envs = 1 # maybe later supp for parralel exceution
+        env = ParallelEnv(env, num_envs)
         act_func = self.act
         if best_act:
             act_func = self.best_act
@@ -611,6 +618,7 @@ class RL_Agent(ABC):
 
         for i in range(num_runs):
             obs, _ = env.reset()[0]
+            obs = [obs] # change this for supp for parralel exceution
             # break
             R = 0
             t = 0

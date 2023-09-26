@@ -58,28 +58,14 @@ def test_2e2():
     device = utils.init_torch('cuda')
     #  PPO DQN CONT DISC MULTI-ACTIONS CONT RNN
     # TEST DISCRETE
-    # + Heuristic
-    env_name = "CartPole-v1"
-    env_c = gym.make(env_name, render_mode=None)
-    def heuristic_func(inner_state, obs: ObsWraper):
-        # an function that does not keep inner state
-        b_shape = len(obs)
-        actions = np.zeros((b_shape, 1)) # single discrete action
-        # just a dummy heuristic for a gym env with np.array observations (for more details about the obs object check ObsWraper)
-        # the heuristic check whether the first number of each observation is positive, if so, it returns action=1, else 0
-        actions[torch.where(obs['data'][:,0] > 0)[0].cpu()] = 1
-        return None, actions
-
-    agent_c = Heuristic_Agent(obs_space=env_c.observation_space, action_space=env_c.action_space, heuristic_func=heuristic_func)
-    reward = agent_c.run_env(env_c, best_act=True)
-    print("Run Reward:", reward)
     # +PPO
     # ++FC
     env = gym.make("LunarLander-v2", render_mode=None)
     model_class = fc.FC
     model_kwargs = {'embed_dim': 64, 'repeat':2}
-    agent = PPO_Agent(obs_space=env.observation_space, action_space=env.action_space, device=device, batch_size=1024, max_mem_size=10**5, num_parallel_envs=4, lr=3e-4, entropy_coeff=0.05, model_class=model_class, model_kwargs=model_kwargs, discount_factor=0.99, tensorboard_dir = None)
+    agent = PPO_Agent(obs_space=env.observation_space, action_space=env.action_space, device=device, batch_size=1024, max_mem_size=10**5, num_parallel_envs=1, lr=3e-4, entropy_coeff=0.05, model_class=model_class, model_kwargs=model_kwargs, discount_factor=0.99, tensorboard_dir = None)
     train_stats = agent.train_n_steps(env=env,n_steps=1000)
+    agent.run_env(env, best_act=True)
     # ++RNN
     env_name = "LunarLander-v2"
     env = gym.make(env_name, render_mode=None, continuous=True)
@@ -93,17 +79,31 @@ def test_2e2():
     env_c = gym.make(env_name, render_mode=None)
     model_class_c = fc.FC
     model_kwargs_c = {'embed_dim': 64, 'repeat':2}
-    agent_c = DQN_Agent(obs_space=env_c.observation_space, action_space=env_c.action_space, batch_size=64, max_mem_size=10**5,num_parallel_envs=16, lr=1e-3,  model_class=model_class_c, model_kwargs=model_kwargs_c, discount_factor=0.99, tensorboard_dir = None, explorer = RandomExplorer(1,0.05,0.01), target_update_time=100)
+    agent_c = DQN_Agent(obs_space=env_c.observation_space, action_space=env_c.action_space, batch_size=64, max_mem_size=10**5,num_parallel_envs=16, lr=1e-3,  model_class=model_class_c, model_kwargs=model_kwargs_c, discount_factor=0.99, tensorboard_dir = None, explorer = RandomExplorer(1,0.05,0.01), target_update='soft[tau=0.01]')
     train_stats_c = agent_c.train_episodial(env=env_c,n_episodes=60)
     # ++RNN
     env_name = "Taxi-v3"
     env_c = gym.make(env_name, render_mode=None)
     model_class_c = rnn.GRU
     model_kwargs_c = {'hidden_dim': 64, 'num_grus':2}
-    agent_c = DQN_Agent(obs_space=env_c.observation_space, action_space=env_c.action_space, batch_size=16, max_mem_size=10**5,num_parallel_envs=16, lr=1e-3,  model_class=model_class_c, model_kwargs=model_kwargs_c, discount_factor=0.99, tensorboard_dir = None, explorer = RandomExplorer(1,0.05,0.01), target_update_time=100)
+    agent_c = DQN_Agent(obs_space=env_c.observation_space, action_space=env_c.action_space, batch_size=16, max_mem_size=10**5,num_parallel_envs=16, lr=1e-3,  model_class=model_class_c, model_kwargs=model_kwargs_c, discount_factor=0.99, tensorboard_dir = None, explorer = RandomExplorer(1,0.05,0.01), target_update='hard[update_freq=10]')
     train_stats_c = agent_c.train_episodial(env=env_c,n_episodes=32)
     mean_reward = agent.run_env(env_c, best_act=True, num_runs=1)
+    # + Heuristic
+    env_name = "CartPole-v1"
+    env_c = gym.make(env_name, render_mode=None)
+    def heuristic_func(inner_state, obs: ObsWraper):
+        # an function that does not keep inner state
+        b_shape = len(obs)
+        actions = np.zeros((b_shape, 1)) # single discrete action
+        # just a dummy heuristic for a gym env with np.array observations (for more details about the obs object check ObsWraper)
+        # the heuristic check whether the first number of each observation is positive, if so, it returns action=1, else 0
+        actions[torch.where(obs['data'][:,0] > 0)[0].cpu()] = 1
+        return None, actions
 
+    agent_c = Heuristic_Agent(obs_space=env_c.observation_space, action_space=env_c.action_space, heuristic_func=heuristic_func, tenorboard_dir=None)
+    reward = agent_c.run_env(env_c, best_act=True)
+    print("Run Reward:", reward)
     # TEST CONT
     # +PPO
     # ++FC

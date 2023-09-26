@@ -15,7 +15,7 @@ class DQN_Agent(RL_Agent):
     """
     DQN Agent
     """
-    def __init__(self, dqn_reg: float=0.0, target_update_time: int = 100, batch_size: int=64, soft_exploit: bool=True, explorer: Explorer = RandomExplorer(), **kwargs):
+    def __init__(self, dqn_reg: float=0.0, batch_size: int=64, target_update: str='hard[update_freq=10]' ,soft_exploit: bool=True, explorer: Explorer = RandomExplorer(), **kwargs):
         """
         Example::
 
@@ -26,23 +26,19 @@ class DQN_Agent(RL_Agent):
 
         Args:
             dqn_reg (float, optional): L2 regularization for the Q network. Defaults to 0.0.
-            target_update_time (int, optional): How often to update the target network. Defaults to 100.
             batch_size (int, optional): Batch size for training. Defaults to 64.
             soft_exploit (bool, optional): Whether to use soft exploit. Defaults to True.
             explorer (Explorer, optional): The explorer to use. Defaults to RandomExplorer().
+            target_update (str): 'soft[tau=0.01]' or 'hard[update_freq=10]' target update
             kwargs: Additional RL_Agent arguments.
+            
         """
         super(DQN_Agent, self).__init__(explorer=explorer, **kwargs, batch_size=batch_size)  # inits
+        self.init_target_update_rule(target_update)
+    
         self.soft_exploit = soft_exploit
         self.dqn_reg = dqn_reg
-        ### curr unused ### for soft target update future support
-        self.tau = 0.001
-        self.alpha = 0.1
-        ###################
         self.criterion = nn.MSELoss().to(self.device)
-
-        self.target_update_time = target_update_time # update target every X learning epochs
-        self.target_update_counter = 0
 
 
     def init_models(self):
@@ -62,8 +58,28 @@ class DQN_Agent(RL_Agent):
         
         with HiddenPrints():
             self.optimizer = adabelief_pytorch.AdaBelief(self.Q_model.parameters(), self.lr, print_change_log=False, amsgrad=False)
-        self.hard_target_update()
+        self.target_update_counter = 0
+        self.target_update_time = 1
+        self.hard_target_update(force_update=True)
 
+
+    def init_target_update_rule(self, target_update):
+        target_update, target_update_param = target_update.split('[')
+        try:
+            target_update_param = float(target_update_param.split('=')[-1][:-1])
+            
+        except:
+            target_update_param = float(target_update_param[:-1])
+            
+        self.target_update_counter = 0
+        if target_update.lower() == 'soft':
+            self.update_target = self.soft_target_update
+            self.tau = target_update_param
+        elif target_update.lower() == 'hard':
+            self.target_update_time = target_update_param
+            self.update_target = self.hard_target_update
+        else:
+            raise ValueError(f"target_update_type must be 'soft[update_each=]' or 'hard[tau=]', got {target_update}")
 
     def set_train_mode(self):
         """
@@ -82,14 +98,25 @@ class DQN_Agent(RL_Agent):
         self.Q_model.eval()
 
 
-    def hard_target_update(self):
+    def hard_target_update(self, force_update: bool = False):
         """
+
         Hard update model parameters.
+
+        Args:
+            force_update (bool, optional): Whether to force an update. Defaults to False - in case of force update target_update_counter is not updated.
+
         """
-        self.target_Q_model.load_state_dict(self.Q_model.state_dict())
-        for p in self.target_Q_model.parameters():
-            p.requires_grad = False
+        self.target_update_counter += 1*(1 - force_update) # add 1 only if not force_update
+        if self.target_update_counter > self.target_update_time or force_update:
+            
+            self.target_Q_model.load_state_dict(self.Q_model.state_dict())
+            for p in self.target_Q_model.parameters():
+                p.requires_grad = False
+
+            self.target_update_counter = 0 if force_update == False else self.target_update_counter
         self.target_Q_model.eval()
+        
 
 
     def soft_target_update(self):
@@ -132,7 +159,7 @@ class DQN_Agent(RL_Agent):
         save_dict = super().save_agent(self)
         save_dict['optimizer'] = self.optimizer.state_dict()
         save_dict['model'] = self.Q_model.state_dict()
-        save_dict['discount_factor'] = self.discount_factor
+        save_dict['discount_factor'] = self.discount_factor        
         torch.save(save_dict, f_name)
         return save_dict
 
@@ -144,7 +171,7 @@ class DQN_Agent(RL_Agent):
         checkpoint = super().load_agent(f_name)
         self.Q_model.load_state_dict(checkpoint['model'])
         self.optimizer.load_state_dict(checkpoint['optimizer'])
-        self.hard_target_update()
+        self.hard_target_update(force_update=True)
         if 'discount_factor' in checkpoint:
             self.discount_factor = checkpoint['discount_factor']
         return checkpoint
@@ -230,6 +257,7 @@ class DQN_Agent(RL_Agent):
         else:
             states, actions, rewards, dones, truncated, next_states = exp
 
+        terminated = dones * (1 - truncated)
         epoch_metrics = defaultdict(float)
         all_samples_len = len(states)
 
@@ -243,9 +271,10 @@ class DQN_Agent(RL_Agent):
                 batched_next_states = next_states[b:b+b_size]
                 batched_rewards = rewards[b:b+b_size]
                 batched_dones = dones[b:b+b_size]
-                batched_truncated= truncated[b:b+b_size]
+                batched_terminated = terminated[b:b+b_size]
 
                 v_table = self.Q_model(batched_states, batched_dones)
+                
                 # only because last batch is smaller
                 real_batch_size = batched_states.len
                 q_values = v_table[np.arange(real_batch_size), batched_actions.long()]
@@ -253,8 +282,7 @@ class DQN_Agent(RL_Agent):
                 with torch.no_grad():
                     q_next = self.target_Q_model(batched_next_states, batched_dones).detach().max(1)[0]
 
-                batched_terminated = batched_dones*(1-batched_truncated) # dones but not truncated
-                # import pdb; pdb.set_trace()
+
                 expected_next_values = batched_rewards + (1-batched_terminated) * self.discount_factor * q_next
 
                 loss = self.criterion(q_values, expected_next_values) + self.dqn_reg*q_values.pow(2).mean()
@@ -262,14 +290,13 @@ class DQN_Agent(RL_Agent):
                 loss.backward()
                 self.optimizer.step()
                 epoch_metrics['q_loss'] += loss.item()
+                epoch_metrics['q_magnitude'] += q_values.mean().item()
                 epoch_metrics['updates'] +=1
                 
 
-                self.target_update_counter += 1
-                if self.target_update_counter > self.target_update_time:
-                    self.hard_target_update()
-                    self.target_update_counter = 0
+                self.update_target()
         self.metrics['q_loss'].append(epoch_metrics['q_loss']/epoch_metrics['updates'])
+        self.metrics['q_magnitude'].append(epoch_metrics['q_magnitude']/epoch_metrics['updates'])
 
 
     def get_last_collected_experiences(self, num_episodes):

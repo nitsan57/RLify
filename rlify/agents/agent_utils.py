@@ -5,7 +5,7 @@ import torch
 import copy
 import gc
 import gymnasium as gym
-
+from collections import defaultdict
 
 def calc_gaes(rewards, values, terminated, discount_factor=0.99, decay=0.9):
     """
@@ -67,7 +67,7 @@ class ObsWraper:
         """
         Args:
             data: The data to wrap
-            keep_dims: Whether to keep the dimensions of the data
+            keep_dims: Whether to keep the dimensions of the data, if False will add a dimension of batch to the data
             tensors: Whether to keep the data in tensor
         """
 
@@ -320,7 +320,7 @@ class ObsWraper:
         temp_dict = {}
         for k, v in self.data.items():
             temp_dict[k] = v * other[k]
-        return ObsWraper(temp_dict, keep_dims=True, tensors=other.tensors)
+        return ObsWraper(temp_dict, keep_dims=True)
 
 
     def __add__(self, other):
@@ -367,9 +367,12 @@ class ObsWraper:
             divides key by key using </> pointwise operator
         """
         temp_dict = {}
+        if np.issubdtype(int, np.number):
+            num = other
+            other = defaultdict(lambda: float(num))
         for k, v in self.data.items():
             temp_dict[k] = v / other[k]
-        return ObsWraper(temp_dict, keep_dims=True, tensors=other.tensors)
+        return ObsWraper(temp_dict, keep_dims=True)
 
 
     def unsqueeze(self, dim=0):
@@ -499,16 +502,19 @@ class ExperienceReplay:
     """
     A class for storing expriences and sampling from them
     """
-    def __init__(self, capacity: float, obs_shape: dict, continous_mem: bool=False):
+    def __init__(self, capacity: float, obs_shape: dict, n_actions: int, continous_mem: bool=False):
         """
         Args:
             capacity: The max number of samples to store
             obs_shape: The shape of the obs
+            n_actions: The number of actions
         """
         self.obs_shape = ObsShapeWraper(obs_shape)
+        self.n_actions = n_actions
         self.capacity = capacity
         self.init_buffers()
         self.continous_mem = continous_mem
+
 
 
     def __len__(self):
@@ -579,7 +585,10 @@ class ExperienceReplay:
         """
 
         self.curr_size = 0
-        actions_buffer = np.zeros((self.capacity), dtype=np.float32)
+        try:
+            actions_buffer = np.zeros(((self.capacity, self.n_actions)), dtype=np.float32).squeeze(-1)
+        except:
+            actions_buffer = np.zeros(((self.capacity, self.n_actions)), dtype=np.float32)
         reward_buffer = np.zeros((self.capacity), dtype=np.float32)
         dones_buffer = np.zeros((self.capacity), dtype=np.uint8)
         truncated_buffer = np.zeros((self.capacity), dtype=np.uint8)
@@ -958,8 +967,8 @@ class SingleEnv_m():
         """
         Resets the environment.
         """
-        s,info = self.env.reset()        
-        return [(np.array(s, ndmin=2), info)]
+        s,info = self.env.reset()
+        return [(np.array(s, ndmin=1), info)]
 
     def step(self, actions):
         """
@@ -973,7 +982,6 @@ class SingleEnv_m():
           action = actions[0]
         except TypeError:
           action = actions
-
         next_states, rewards, terminated, trunc, _ = self.env.step(action)
         next_states = np.array(next_states, ndmin=2)
         rewards = np.array(rewards, ndmin=1)

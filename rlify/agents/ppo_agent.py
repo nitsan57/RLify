@@ -86,14 +86,12 @@ class PPO_Agent(RL_Agent):
         # self.policy_nn = torch.compile(self.policy_nn, mode="max-autotune")
         
         with HiddenPrints():
-            # self.actor_optimizer = optim.RMSprop(self.policy_nn.parameters(), self.lr, centered=True)
-            self.actor_optimizer =adabelief_pytorch.AdaBelief(self.policy_nn.parameters(), self.lr, print_change_log=False, amsgrad=False)
+            self.actor_optimizer = adabelief_pytorch.AdaBelief(self.policy_nn.parameters(), self.lr, print_change_log=False, amsgrad=False)
 
         
         self.critic_nn = self.model_class(input_shape=self.obs_shape, out_shape=1, **self.model_kwargs).to(self.device) #output single value - V(s) and not Q(s,a) as before\
 
         with HiddenPrints():
-            # self.critic_optimizer = optim.RMSprop(self.critic_nn.parameters(), self.lr, centered=True)
             self.critic_optimizer = adabelief_pytorch.AdaBelief(self.critic_nn.parameters(), self.lr, print_change_log=False, amsgrad=False)
 
 
@@ -241,7 +239,6 @@ class PPO_Agent(RL_Agent):
         advantages, returns = calc_gaes(rewards, values, terminated, self.discount_factor)
 
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-10)
-        # advantages = (advantages / advantages.abs().max())
         returns = returns.unsqueeze(-1)
         
         all_samples_len = len(states)

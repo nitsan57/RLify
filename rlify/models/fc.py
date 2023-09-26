@@ -14,18 +14,19 @@ class FC(AbstractModel):
         self.mean_in_params = torch.nn.ParameterDict({k:torch.nn.Parameter(torch.zeros(self.input_shape[k])+1e-2) for k in self.input_shape})
         self.std_in_params = torch.nn.ParameterDict({k:torch.nn.Parameter(torch.ones(self.input_shape[k])) for k in self.input_shape})
 
-        self.l1 = torch.nn.ModuleDict({k:nn.Sequential(nn.Linear(input_size, embed_dim), nn.ReLU()) for k,input_size in self.input_size_dict.items()})
-        self.embed_layer = torch.nn.ModuleDict({k:nn.Sequential(*[nn.Sequential(nn.Linear(embed_dim, embed_dim),nn.ReLU()) for i in range(repeat)])  for k in self.input_size_dict})
-        self.concat_layer = nn.Sequential(nn.Linear(embed_dim * self.num_inputs, embed_dim), torch.nn.ReLU())
+        self.l1 = torch.nn.ModuleDict({k:nn.Sequential(nn.Linear(input_size, embed_dim), nn.LeakyReLU()) for k,input_size in self.input_size_dict.items()})
+        self.embed_layer = torch.nn.ModuleDict({k:nn.Sequential(*[nn.Sequential(nn.Linear(embed_dim, embed_dim),nn.LeakyReLU()) for i in range(repeat)])  for k in self.input_size_dict})
+        self.concat_layer = nn.Sequential(nn.Linear(embed_dim * self.num_inputs, embed_dim), torch.nn.LeakyReLU())
         self.l2 = nn.Linear(embed_dim, out_shape)
     
 
     def forward(self, x, d=None): # d is for rnn api compability
 
         res_dict = dict()
+        
         for k in x:
             layer = self.l1[k]
-            normed = (x[k] - self.mean_in_params[k])/torch.abs((self.std_in_params[k]) + 1e-3)
+            normed = (x[k] - self.mean_in_params[k])/(torch.abs((self.std_in_params[k])) + 1e-3)
             layer_in = torch.flatten(normed, start_dim=1)
             out = layer(layer_in)
             res_dict[k] = out
