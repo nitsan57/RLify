@@ -31,7 +31,7 @@ class DQN_Agent(RL_Agent):
             explorer (Explorer, optional): The explorer to use. Defaults to RandomExplorer().
             target_update (str): 'soft[tau=0.01]' or 'hard[update_freq=10]' target update
             kwargs: Additional RL_Agent arguments.
-            
+
         """
         super(DQN_Agent, self).__init__(explorer=explorer, **kwargs, batch_size=batch_size)  # inits
         self.init_target_update_rule(target_update)
@@ -75,6 +75,7 @@ class DQN_Agent(RL_Agent):
         if target_update.lower() == 'soft':
             self.update_target = self.soft_target_update
             self.tau = target_update_param
+            assert self.tau < 1 and self.tau > 0, "tau must be between 0 and 1"
         elif target_update.lower() == 'hard':
             self.target_update_time = target_update_param
             self.update_target = self.hard_target_update

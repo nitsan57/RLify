@@ -101,7 +101,7 @@ def test_2e2():
         actions[torch.where(obs['data'][:,0] > 0)[0].cpu()] = 1
         return None, actions
 
-    agent_c = Heuristic_Agent(obs_space=env_c.observation_space, action_space=env_c.action_space, heuristic_func=heuristic_func, tenorboard_dir=None)
+    agent_c = Heuristic_Agent(obs_space=env_c.observation_space, action_space=env_c.action_space, heuristic_func=heuristic_func, tensorboard_dir=None)
     reward = agent_c.run_env(env_c, best_act=True)
     print("Run Reward:", reward)
     # TEST CONT
