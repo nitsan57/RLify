@@ -1,43 +1,56 @@
 import torch
-import torch.nn as nn
 from abc import ABC, abstractmethod
 import numpy as np
 from rlify.agents.agent_utils import ObsShapeWraper
-
 from .model_factory import models_db
 
-class AbstractModel(torch.nn.Module, ABC):
-    is_rnn=False
 
-    def __init__(self, input_shape, out_shape):
+class BaseModel(torch.nn.Module, ABC):
+    """
+    Base class for all NN models
+    """
+
+    is_rnn = False
+
+    def __init__(self, input_shape, out_shape: tuple):
+        """
+        Args:
+            input_shape (tuple): input shape of the model
+            out_shape (tuple): output shape of the model
+        """
         super().__init__()
-    
         self.input_shape = ObsShapeWraper(input_shape)
 
-
-        self.out_shape = np.array(out_shape)
-        
-        if len(self.out_shape.shape) == 0:
-            self.out_shape = self.out_shape.reshape((1,))
-
+        self.input_size_dict = {
+            k: np.prod(self.input_shape[k]) for k in self.input_shape
+        }
+        self.num_inputs = len(self.input_size_dict)
+        self.out_shape = out_shape
 
     def get_total_params(self):
+        """
+        Returns the total number of parameters in the model
+        """
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
-    
 
-    # def get_output_dim(self):
-    #     return self.out_shape
-    
     def __init_subclass__(cls):
         models_db.register(cls)
 
-        
     @abstractmethod
-    def forward(self, x, dones = None):
+    def forward(self, x, dones=None):
+        """
+        Forward pass of the model
+        """
         raise NotImplementedError
 
     @abstractmethod
     def reset(self):
-        """if not rnn - impl can be just: pass, otherwise resets hidden state"""
+        """resets hidden state, if not rnn - can be just: pass"""
         raise NotImplementedError
 
+    @property
+    def device(self):
+        """
+        Returns the device of the model
+        """
+        return next(self.parameters()).device

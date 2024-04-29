@@ -5,15 +5,18 @@ import numpy as np
 
 from rlify.agents.explorers import Explorer, HeuristicExplorer, RandomExplorer
 from .agent_utils import ExperienceReplay
+
 # from .action_spaces_utils import CAW
 from .drl_agent import RL_Agent
 from utils import HiddenPrints
 from collections import defaultdict
 
+
 class Heuristic_Agent(RL_Agent):
     """
     A Heuristic Agent that uses a heuristic function to act.
     """
+
     def __init__(self, heuristic_func, **kwargs):
         """
 
@@ -42,56 +45,57 @@ class Heuristic_Agent(RL_Agent):
 
 
         """
-        explorer = HeuristicExplorer(heuristic_func, 1,1,1)
+        explorer = HeuristicExplorer(heuristic_func, 1, 1, 1)
         super(Heuristic_Agent, self).__init__(explorer=explorer, **kwargs)  # inits
 
-
-    def init_models(self):
+    def setup_models(self):
         """
         Does nothing in this agent.
         """
         pass
 
+    def get_models_input_output_shape(obs_space, action_space):
+        """
+        Does nothing in this agent.
+        """
+        return {}
 
-    def save_agent(self,f_name) -> dict:
-        save_dict = super().save_agent(self)
-        save_dict['explorer_inner'] = self.explorer.inner_state
+    def save_agent(self, f_name) -> dict:
+        save_dict = super().save_agent(f_name)
+        save_dict["explorer_inner"] = self.explorer.inner_state
         torch.save(save_dict, f_name)
         return save_dict
 
-
-    def load_agent(self,f_name):
+    def load_agent(self, f_name):
         checkpoint = super().load_agent(f_name)
-        self.explorer.inner_state = checkpoint['explorer_inner']
+        self.explorer.inner_state = checkpoint["explorer_inner"]
         return checkpoint
-
 
     def train(self, env, n_episodes: int):
         train_episode_rewards = super().train(env, n_episodes)
         self.experience.clear()
         return train_episode_rewards
-    
 
-    def act(self, observations, num_obs=1,extra_info=False):
+    def act(self, observations, num_obs=1):
         observations = self.pre_process_obs_for_act(observations, num_obs)
         explore_action = self.explorer.act(self.action_space, observations, num_obs)
 
-        assert explore_action.shape[0] == num_obs, f"The explorer heuristic functions does not returns the correct number of actions (batch dim) expected: {num_obs}, got: {explore_action.shape[0]}"
+        assert (
+            explore_action.shape[0] == num_obs
+        ), f"The explorer heuristic functions does not returns the correct number of actions (batch dim) expected: {num_obs}, got: {explore_action.shape[0]}"
         return self.return_correct_actions_dim(explore_action, num_obs)
 
+    def best_act_discrete(self, observations, num_obs=1):
+        return self.act(observations, num_obs=num_obs)
 
-    def best_act_discrete(self, observations, num_obs=1, extra_info=False):
-        return self.act(observations, num_obs=num_obs, extra_info=extra_info)
-    
+    def best_act_cont(self, observations, num_obs=1):
+        return self.act(observations, num_obs=num_obs)
 
-    def best_act_cont(self, observations, num_obs=1, extra_info=False):
-        return self.act(observations, num_obs=num_obs, extra_info=extra_info)
-    
-
-    def reset_rnn_hidden(self,):
+    def reset_rnn_hidden(
+        self,
+    ):
         """reset nn hidden_state - does nothing in this agent"""
         pass
-
 
     def update_policy(self, *exp):
         """
@@ -99,13 +103,10 @@ class Heuristic_Agent(RL_Agent):
         """
         pass
 
-
     def get_last_collected_experiences(self, num_episodes):
         """Mainly for Paired Algorithm support"""
-        exp  = self.experience.get_last_episodes(num_episodes)
+        exp = self.experience.get_last_episodes(num_episodes)
         return exp
-    
 
     def clear_exp(self):
         return super().clear_exp()
-   

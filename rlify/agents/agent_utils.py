@@ -7,6 +7,7 @@ import gc
 import gymnasium as gym
 from collections import defaultdict
 
+
 def calc_gaes(rewards, values, terminated, discount_factor=0.99, decay=0.9):
     """
     works with rewards vector which consitst of many epidsodes
@@ -17,45 +18,63 @@ def calc_gaes(rewards, values, terminated, discount_factor=0.99, decay=0.9):
 
     next_values = torch.cat([values[1:], torch.zeros(1, device=device)])
 
-    td = rewards + discount_factor * (next_values)*(1 - terminated)
+    td = rewards + discount_factor * (next_values) * (1 - terminated)
     deltas = td - values
 
     gaes = torch.zeros_like(deltas, device=device)
     gaes[-1] = rewards[-1]
 
-    for i in reversed(range(len(deltas) -1)):
-        gaes[i] = deltas[i] + discount_factor * decay * gaes[i+1] * (1 - terminated[i])
+    for i in reversed(range(len(deltas) - 1)):
+        gaes[i] = deltas[i] + discount_factor * decay * gaes[i + 1] * (
+            1 - terminated[i]
+        )
         # warmup_td[i] = rewards[i] + discount_factor * warmup_td[i+1] * (1 - terminated[i])
-        
+
     return gaes, td
+
+
+def calc_returns(rewards, terminated, discount_factor=0.99):
+    """
+    works with rewards vector which consitst of many epidsodes
+    Return the General Advantage Estimates from the given rewards and values.
+    Paper: https://arxiv.org/pdf/1506.02438.pdf
+    """
+    returns = np.zeros_like(rewards)
+    returns[-1] = rewards[-1]
+
+    for i in reversed(range(len(returns) - 1)):
+        returns[i] = rewards[i] + discount_factor * returns[i + 1] * (1 - terminated[i])
+    return returns
 
 
 class ObsShapeWraper(dict):
     dict_types = [dict, gym.spaces.Dict]
-    
+
     def __init__(self, obs_shape):
-            res = {}
-            self.dict_types.append(type(self))
-            if type(obs_shape) in self.dict_types:
-                try:
-                    for x in obs_shape:
-                        if len(obs_shape[x].shape) == 0:
-                            res[x] = (1,)
-                        else:
-                            res[x] = obs_shape[x].shape
-                except AttributeError:
-                    for x in obs_shape:
-                        if len(obs_shape[x]) == 0:
-                            res[x] = (1,)
-                        else:
-                            res[x] = obs_shape[x]
-                super(ObsShapeWraper, self).__init__(res)
-            else:
-                try:
-                    res = obs_shape.shape
-                except AttributeError:
-                    res = obs_shape
-                super(ObsShapeWraper, self).__init__({'data': tuple([*res])})
+        res = {}
+        self.dict_types.append(type(self))
+        if type(obs_shape) in self.dict_types:
+            try:
+                for x in obs_shape:
+                    if len(obs_shape[x].shape) == 0:
+                        res[x] = (1,)
+                    else:
+                        res[x] = obs_shape[x].shape
+            except AttributeError:
+                for x in obs_shape:
+                    if len(obs_shape[x]) == 0:
+                        res[x] = (1,)
+                    else:
+                        res[x] = obs_shape[x]
+            super(ObsShapeWraper, self).__init__(res)
+        else:
+            try:
+                res = obs_shape.shape
+                if len(res) == 0:
+                    res = (1,)
+            except AttributeError:
+                res = obs_shape
+            super(ObsShapeWraper, self).__init__({"data": tuple([*res])})
 
 
 class ObsWraper:
@@ -63,12 +82,19 @@ class ObsWraper:
     A class for wrapping observations, the object is roughly a dict of np.arrays or torch.tensors
     A default key is 'data' for the main data if it in either a np.array or torch.tensor
     """
-    def __init__(self, data: (dict, np.array, torch.tensor)=None, keep_dims: bool=True, tensors: bool=False):
+
+    def __init__(
+        self,
+        data: (dict, np.array, torch.tensor) = None,
+        keep_dims: bool = True,
+        tensors: bool = False,
+    ):
         """
+
         Args:
             data: The data to wrap
             keep_dims: Whether to keep the dimensions of the data, if False will add a dimension of batch to the data
-            tensors: Whether to keep the data in tensor
+            tensors: Whether to keep the data in torch.tensor
         """
 
         self.obj_constructor = None
@@ -81,56 +107,58 @@ class ObsWraper:
             self.len = data.len
             self.shape = copy.deepcopy(data.shape)
             return
+        if type(data) == dict:
+            return self.init_from_dict(data, keep_dims, tensors)
 
-        if np.issubdtype(type(data), np.integer) or np.issubdtype(type(data), np.float):
-            data = np.array(data,ndmin=1).astype(np.float32)
+        if np.issubdtype(type(data), np.integer) or np.issubdtype(type(data), float):
+            data = np.array(data, ndmin=1).astype(np.float32)
 
         if data is None:
             return self._init_from_none_()
-        
+
         if type(data) == list or type(data) == tuple:
             if type(data[0]) == ObsWraper:
                 return self.init_from_list_obsWrapper_obs(data)
             else:
                 return self.init_from_list_generic_data(data)
         else:
-            try:
-                if type(data) == dict:
-                    to_add = data
-                else:
-                    raise TypeError
-                self.data = {}
-                
-                for k, v in to_add.items():
-                    if tensors or torch.is_tensor(v):
-                        self.obj_constructor = torch.tensor
-                        v = torch.atleast_1d(v)
-                    else:
-                        self.obj_constructor = np.array
-                        v = np.array(v,ndmin=1)
-
-                    self.data[k] = v
-                    len_v = len(self.data[k])
-
-                    if self.len == 0:
-                        self.len = len_v
-                    assert self.len == len_v, "cant init a dict with a value with different len"
-
-            except TypeError:
+            if type(data) == dict:
+                to_add = data
+            else:
                 if keep_dims:
-                    to_add = np.array(data,ndmin=1)
+                    to_add = np.array(data, ndmin=1)
                 else:
                     to_add = np.expand_dims(data, axis=0)
-                self.data = {'data': to_add}
+                self.data = {"data": to_add}
                 self.len = len(to_add)
+                self.update_shape()
+                return
+            self.data = {}
+
+            for k, v in to_add.items():
+                if tensors or torch.is_tensor(v):
+                    self.obj_constructor = torch.tensor
+                    v = torch.atleast_1d(v)
+                else:
+                    self.obj_constructor = np.array
+                    v = np.array(v, ndmin=1)
+
+                self.data[k] = v
+                len_v = len(self.data[k])
+
+                if self.len == 0:
+                    self.len = len_v
+                assert (
+                    self.len == len_v
+                ), "cant init a dict with a value with different len"
 
         self.update_shape()
-
 
     def update_shape(self):
         """
         Updates the shape of the object
         """
+        self.shape = {}
         for k, v in self.items():
             try:
                 self.shape[k] = v.shape
@@ -140,6 +168,23 @@ class ObsWraper:
                 except:
                     self.shape[k] = None
 
+    def init_from_dict(self, data, keep_dims, tensors):
+        """ """
+        for k, v in data.items():
+            if tensors or torch.is_tensor(v):
+                self.obj_constructor = torch.tensor
+                v = torch.atleast_1d(v)
+            else:
+                self.obj_constructor = np.array
+                v = np.array(v, ndmin=1)
+
+            self.data[k] = v
+            len_v = len(self.data[k])
+
+            if self.len == 0:
+                self.len = len_v
+            assert self.len == len_v, "cant init a dict with a value with different len"
+        self.update_shape()
 
     def init_from_list_obsWrapper_obs(self, obs_list):
         """
@@ -149,7 +194,7 @@ class ObsWraper:
         """
         obj_constructor = obs_list[0].obj_constructor
         keys = list(obs_list[0].keys())
-       
+
         for k in keys:
             res = []
             for obs in obs_list:
@@ -166,7 +211,6 @@ class ObsWraper:
         self.obj_constructor = obj_constructor
         self.len = len(obs_list)
 
-    
     def init_from_list_generic_data(self, obs_list):
         """
         Initializes from a list of generic data
@@ -177,23 +221,25 @@ class ObsWraper:
         if torch.is_tensor(obs_list[0]):
             self.obj_constructor = torch.tensor
             res = self.obj_constructor(obs_list)
+        elif type(obs_list[0]) == dict:
+            v = {k: [dic[k] for dic in obs_list] for k in obs_list[0]}
+            return self.init_from_dict(v, keep_dims=False, tensors=False)
+
         else:
             self.obj_constructor = np.array
             res = self.obj_constructor(obs_list)
             if len(res.shape) == 1:
                 res = res.reshape(res.shape[0], 1).astype(np.float32)
 
-        self.data['data'] = res
+        self.data["data"] = res
         self.len = len(res)
-        self.shape['data'] = res.data.shape
-
+        self.shape["data"] = res.data.shape
 
     def _init_from_none_(self):
         """
         Initializes an object without data
         """
         self.__init__({})
-
 
     def __setitem__(self, key, value):
         """
@@ -218,6 +264,15 @@ class ObsWraper:
 
         self.update_shape()
 
+    def __delitem__(self, key):
+        """
+        Deletes an item in the object
+
+        Args:
+            key: The key to delete
+        """
+        del self.data[key]
+        self.update_shape()
 
     def __iter__(self):
         """
@@ -225,7 +280,6 @@ class ObsWraper:
             an iterator over the object
         """
         return iter(self.data)
-
 
     def __getitem__(self, key):
         """
@@ -247,7 +301,6 @@ class ObsWraper:
                 temp_dict[k] = np.array(v.__getitem__(key))
         return ObsWraper(temp_dict)
 
-    
     def slice_tensors(self, key):
         """
         Args:
@@ -258,14 +311,22 @@ class ObsWraper:
         if type(key) is str:
             return self.data[key]
         temp_dict = {}
-        
+
         for k, v in self.data.items():
             if np.issubdtype(type(key), np.integer):
-                temp_dict[k] = v.__getitem__(key).clone().detach().requires_grad_(True).unsqueeze(-1).float()
+                temp_dict[k] = (
+                    v.__getitem__(key)
+                    .clone()
+                    .detach()
+                    .requires_grad_(True)
+                    .unsqueeze(-1)
+                    .float()
+                )
             else:
-                temp_dict[k] = v.__getitem__(key).clone().detach().requires_grad_(True).float()
+                temp_dict[k] = (
+                    v.__getitem__(key).clone().detach().requires_grad_(True).float()
+                )
         return ObsWraper(temp_dict, tensors=True)
-
 
     def keys(self):
         """
@@ -274,14 +335,12 @@ class ObsWraper:
         """
         return self.data.keys()
 
-
     def items(self):
         """
         Returns:
             the items of the object
         """
         return self.data.items()
-
 
     def values(self):
         """
@@ -290,7 +349,6 @@ class ObsWraper:
         """
         return self.data.values()
 
-
     def __len__(self):
         """
         Returns:
@@ -298,30 +356,26 @@ class ObsWraper:
         """
         return self.len
 
-
     def __str__(self) -> str:
         """
         Returns the string representation of the object
         """
         return self.data.__str__()
 
-
     def __repr__(self) -> str:
         return self.data.__repr__()
-
 
     def __mul__(self, other):
         """
         Multiplies the object by another object
         Args:
             other: The other object to multiply by
-            multiplies key by key using <*> pointwise operator 
+            multiplies key by key using <*> pointwise operator
         """
         temp_dict = {}
         for k, v in self.data.items():
             temp_dict[k] = v * other[k]
         return ObsWraper(temp_dict, keep_dims=True)
-
 
     def __add__(self, other):
         """
@@ -335,7 +389,6 @@ class ObsWraper:
             temp_dict[k] = v + other[k]
         return ObsWraper(temp_dict, keep_dims=True)
 
-
     def __neg__(self):
         """
         Negates the object
@@ -344,7 +397,6 @@ class ObsWraper:
         for k, v in self.data.items():
             temp_dict[k] = -v
         return ObsWraper(temp_dict, keep_dims=True)
-
 
     def __sub__(self, other):
         """
@@ -357,7 +409,6 @@ class ObsWraper:
         for k, v in self.data.items():
             temp_dict[k] = v - other[k]
         return ObsWraper(temp_dict, keep_dims=True)
-    
 
     def __truediv__(self, other):
         """
@@ -374,7 +425,6 @@ class ObsWraper:
             temp_dict[k] = v / other[k]
         return ObsWraper(temp_dict, keep_dims=True)
 
-
     def unsqueeze(self, dim=0):
         """
         Args:
@@ -386,7 +436,6 @@ class ObsWraper:
         for k, v in self.data.items():
             temp_dict[k] = v.unsqueeze(dim)
         return ObsWraper(temp_dict, keep_dims=True, tensors=True)
-    
 
     def squeeze(self, dim=0):
         """
@@ -400,8 +449,7 @@ class ObsWraper:
             temp_dict[k] = v.squeeze(dim)
         return ObsWraper(temp_dict, keep_dims=True, tensors=True)
 
-
-    def get_as_tensors(self, device='cpu'):
+    def get_as_tensors(self, device="cpu"):
         """
         Args:
             device: The device to put the tensors on
@@ -410,9 +458,12 @@ class ObsWraper:
         """
         temp_dict = {}
         for k, v in self.data.items():
-            temp_dict[k] = torch.tensor(v).float().to(device).float()
-        return ObsWraper(temp_dict, keep_dims=True, tensors=True)
+            if type(v) == np.ndarray:
+                temp_dict[k] = torch.from_numpy(v).float().to(device)
+            elif type(v) == torch.Tensor:
+                temp_dict[k] = v.detach().clone().to(device).float()
 
+        return ObsWraper(temp_dict, keep_dims=True, tensors=True)
 
     def np_cat(self, other, axis=0):
         """
@@ -428,7 +479,6 @@ class ObsWraper:
             temp_dict[k] = np.concatenate([self.data[k], other[k]], axis)
         return ObsWraper(temp_dict)
 
-
     def np_append(self, other, axis=0):
         """
         Appends the object by another object
@@ -443,7 +493,7 @@ class ObsWraper:
         else:
             self.data = copy.deepcopy(other.data)
             self.len = other.len
-        
+
     def cat(self, other, axis=0):
         """
         Concatenates the object by another object
@@ -459,7 +509,6 @@ class ObsWraper:
                 temp_dict[k] = np.concatenate([self.data[k], other[k]], axis)
         return ObsWraper(temp_dict)
 
-
     def np_zero_roll(self, indx, inplace=False):
         """Rolls the data by indx and fills the empty space with zeros - only on axis 0
         Args:
@@ -470,12 +519,13 @@ class ObsWraper:
         """
         temp_dict = {}
         for k, v in self.data.items():
-            temp_dict[k] = np.concatenate([self.data[k][-indx:], np.zeros_like(self.data[k][:-indx])])
+            temp_dict[k] = np.concatenate(
+                [self.data[k][-indx:], np.zeros_like(self.data[k][:-indx])]
+            )
         if inplace:
             self.data = temp_dict
         else:
             return ObsWraper(temp_dict)
-        
 
     def np_roll(self, indx, axis=0, inplace=False):
         """
@@ -494,7 +544,6 @@ class ObsWraper:
             self.data = temp_dict
         else:
             return ObsWraper(temp_dict)
-        
 
 
 class ExperienceReplay:
@@ -502,7 +551,14 @@ class ExperienceReplay:
     """
     A class for storing expriences and sampling from them
     """
-    def __init__(self, capacity: float, obs_shape: dict, n_actions: int, continous_mem: bool=False):
+
+    def __init__(
+        self,
+        capacity: float,
+        obs_shape: dict,
+        n_actions: int,
+        prioritize_high_reward=False,
+    ):
         """
         Args:
             capacity: The max number of samples to store
@@ -513,9 +569,8 @@ class ExperienceReplay:
         self.n_actions = n_actions
         self.capacity = capacity
         self.init_buffers()
-        self.continous_mem = continous_mem
-
-
+        self.continous_mem = False
+        self.prioritize_high_reward = prioritize_high_reward
 
     def __len__(self):
         """
@@ -524,8 +579,14 @@ class ExperienceReplay:
         """
         return self.curr_size
 
-
-    def append(self, curr_obs: ObsWraper, actions: np.array, rewards: np.array, dones: np.array, truncateds: np.array):
+    def append(
+        self,
+        curr_obs: ObsWraper,
+        actions: np.array,
+        rewards: np.array,
+        dones: np.array,
+        truncateds: np.array,
+    ):
         """
         Appends a new sample to the memory
         Args:
@@ -535,60 +596,107 @@ class ExperienceReplay:
             dones: Whether the episode is done
         """
         # extra_exps
+        actions = np.array(actions).reshape(-1, self.n_actions)
 
         curr_obs = ObsWraper(curr_obs)
-        
+
         num_samples = len(curr_obs)
 
         free_space = self.capacity - self.curr_size
         if num_samples > self.capacity:
             self.curr_size = 0
-            curr_obs = curr_obs[:self.capacity]
-            actions = actions[:self.capacity]
-            rewards = rewards[:self.capacity]
-            dones = dones[:self.capacity]
-            truncateds = truncateds[:self.capacity]
+            curr_obs = curr_obs[: self.capacity]
+            actions = actions[: self.capacity]
+            rewards = rewards[: self.capacity]
+            dones = dones[: self.capacity]
+            truncateds = truncateds[: self.capacity]
             dones[-1] = True
             truncateds[-1] = True
             num_samples = self.capacity
+            self.episode_start_indices = self.get_episode_start_indices()
 
         elif self.curr_size + num_samples > self.capacity and not self.continous_mem:
-            done_indices = np.where(self.all_buffers[self.dones_index] == True)[0]
+            done_indices = self.get_episode_end_indices()
             relevant_dones = np.where(done_indices > num_samples - free_space)[0]
             # roll more then memory needed:
 
-            relevant_index = relevant_dones[len(relevant_dones)//2]
+            relevant_index = relevant_dones[len(relevant_dones) // 2]
             done_index = done_indices[relevant_index]
-            for i in range(len(self.all_buffers)):
-                if i == self.states_index:
-                    self.all_buffers[i] = self.all_buffers[i].np_zero_roll(-done_index - 1, inplace=False)
-                else:
-                    self.all_buffers[i] = np.concatenate([self.all_buffers[i][-(-done_index-1):], np.zeros_like(self.all_buffers[i][:-(-done_index-1)])]) # np.roll(self.all_buffers[i], -done_index - 1, axis=0)
-            
-            self.curr_size -= (done_index+1)
+            self.all_buffers[self.states_index] = self.all_buffers[
+                self.states_index
+            ].np_zero_roll(-done_index - 1, inplace=False)
+            self.all_buffers[self.actions_index] = np.concatenate(
+                [
+                    self.all_buffers[self.actions_index][-(-done_index - 1) :],
+                    np.zeros_like(
+                        self.all_buffers[self.actions_index][: -(-done_index - 1)]
+                    ),
+                ]
+            )
+            self.all_buffers[self.reward_index] = np.concatenate(
+                [
+                    self.all_buffers[self.reward_index][-(-done_index - 1) :],
+                    np.zeros_like(
+                        self.all_buffers[self.reward_index][: -(-done_index - 1)]
+                    ),
+                ]
+            )
+            self.all_buffers[self.dones_index] = np.concatenate(
+                [
+                    self.all_buffers[self.dones_index][-(-done_index - 1) :],
+                    np.zeros_like(
+                        self.all_buffers[self.dones_index][: -(-done_index - 1)]
+                    ),
+                ]
+            )
+            self.all_buffers[self.truncated_index] = np.concatenate(
+                [
+                    self.all_buffers[self.truncated_index][-(-done_index - 1) :],
+                    np.zeros_like(
+                        self.all_buffers[self.truncated_index][: -(-done_index - 1)]
+                    ),
+                ]
+            )
+            self.sampled_episodes_count = np.concatenate(
+                [
+                    self.sampled_episodes_count[-(-done_index - 1) :],
+                    np.ones_like(self.sampled_episodes_count[: -(-done_index - 1)]),
+                ]
+            )
+            self.curr_size -= done_index + 1
 
-        self.all_buffers[self.states_index][self.curr_size:self.curr_size + num_samples] = curr_obs
-        self.all_buffers[self.actions_index][self.curr_size:self.curr_size + num_samples] = actions
-        self.all_buffers[self.reward_index][self.curr_size:self.curr_size + num_samples] = rewards
-        try:
-            self.all_buffers[self.dones_index][self.curr_size:self.curr_size + num_samples] = dones
-        except:
-            import pdb; pdb.set_trace()
-        self.all_buffers[self.truncated_index][self.curr_size:self.curr_size + num_samples] = truncateds
+        self.all_buffers[self.states_index][
+            self.curr_size : self.curr_size + num_samples
+        ] = curr_obs
+        self.all_buffers[self.actions_index][
+            self.curr_size : self.curr_size + num_samples
+        ] = actions
+        self.all_buffers[self.reward_index][
+            self.curr_size : self.curr_size + num_samples
+        ] = rewards
+        self.all_buffers[self.dones_index][
+            self.curr_size : self.curr_size + num_samples
+        ] = dones
+        self.all_buffers[self.truncated_index][
+            self.curr_size : self.curr_size + num_samples
+        ] = truncateds
 
         self.curr_size += num_samples
-
 
     def init_buffers(self):
         """
         Initializes the buffers
         """
-
+        self.sampled_episodes_count = np.ones(((self.capacity, 1)), dtype=np.float32)
         self.curr_size = 0
         try:
-            actions_buffer = np.zeros(((self.capacity, self.n_actions)), dtype=np.float32).squeeze(-1)
+            actions_buffer = np.zeros(
+                ((self.capacity, self.n_actions)), dtype=np.float32
+            )  # .squeeze(-1)
         except:
-            actions_buffer = np.zeros(((self.capacity, self.n_actions)), dtype=np.float32)
+            actions_buffer = np.zeros(
+                ((self.capacity, self.n_actions)), dtype=np.float32
+            )
         reward_buffer = np.zeros((self.capacity), dtype=np.float32)
         dones_buffer = np.zeros((self.capacity), dtype=np.uint8)
         truncated_buffer = np.zeros((self.capacity), dtype=np.uint8)
@@ -599,8 +707,13 @@ class ExperienceReplay:
             shape = (self.capacity, *self.obs_shape[k])
             states_buffer[k] = np.zeros(shape, dtype=np.float32)
 
-        self.all_buffers = [states_buffer, actions_buffer,
-                            reward_buffer, dones_buffer, truncated_buffer]
+        self.all_buffers = [
+            states_buffer,
+            actions_buffer,
+            reward_buffer,
+            dones_buffer,
+            truncated_buffer,
+        ]
 
         self.states_index = 0
         self.actions_index = 1
@@ -608,13 +721,53 @@ class ExperienceReplay:
         self.dones_index = 3
         self.truncated_index = 4
 
-
     def clear(self):
         """
         Clears the memory
         """
         self.init_buffers()
 
+    def get_episodes_accumulated_rewards(self):
+        end_indices = self.get_episode_end_indices()
+        summed_r = np.cumsum(self.all_buffers[self.reward_index])
+        first_ep_r = summed_r[end_indices[0]]
+        summed_r = summed_r[end_indices] - np.roll(summed_r[end_indices], 1)
+        summed_r[0] = first_ep_r
+        return summed_r
+
+    def get_episode_end_indices(self):
+        return np.where(self.all_buffers[self.dones_index] == True)[0]
+
+    def get_episode_start_indices(self):
+        episode_indices = [0]
+        episode_indices.extend(self.get_episode_end_indices() + 1)
+        return episode_indices[:-1]
+
+    def get_num_samples_of_k_first_episodes(self, num_episodes):
+        episode_indices = self.get_episode_start_indices()
+        assert (
+            len(episode_indices) >= num_episodes
+        ), "requested more episodes then actual stored in mem"
+        # it is a "False" done just for episode begin idx
+        num_samples = episode_indices[num_episodes] + 1
+        return num_samples
+
+    def get_num_samples_of_k_last_episodes(self, num_episodes):
+        episode_indices = [0]
+        episode_indices.extend(
+            self.get_episode_end_indices()
+        )  # last episode indx is done =1
+        assert (
+            len(episode_indices) >= num_episodes
+        ), "requested more episodes then actual stored in mem"
+        # it is a "False" done just for episode begin idx
+        if episode_indices[-num_episodes - 1] == 0:
+            num_samples = self.curr_size - episode_indices[-num_episodes - 1]
+        else:  # we dont want the last done in our batch
+            num_samples = (
+                self.curr_size - episode_indices[-num_episodes - 1] - 1
+            )  # exclude done indice
+        return num_samples
 
     def get_last_episodes(self, num_episodes):
         """
@@ -623,20 +776,32 @@ class ExperienceReplay:
         Returns:
             all last episode samples, or specified num samples
         """
-        episode_indices = [0]
-        episode_indices.extend(np.where(self.all_buffers[self.dones_index] == True)[
-                               0])  # last episode indx is done =1
-
-        assert len(
-            episode_indices) >= num_episodes, "requested more episodes then actual stored in mem"
-        # it is a "False" done just for episode begin idx
-        if episode_indices[-num_episodes - 1] == 0:
-            num_samples = self.curr_size - episode_indices[-num_episodes - 1]
-        else:  # we dont want the last done in our batch
-            num_samples = self.curr_size - episode_indices[-num_episodes - 1] - 1  # exclude first done indice
-        
+        num_samples = self.get_num_samples_of_k_last_episodes(num_episodes)
         return self.get_last_samples(num_samples)
 
+    def get_first_episodes(self, num_episodes):
+        """
+        Args:
+            num_episodes: The number of episodes to return
+        Returns:
+            all last episode samples, or specified num samples
+        """
+        num_samples = self.get_num_samples_of_k_first_episodes(num_episodes)
+        return self.get_first_samples(num_samples)
+
+    def get_first_samples(self, num_samples):
+        """return all last episode samples, or specified num samples"""
+        assert (
+            num_samples <= self.curr_size
+        ), "requested more samples then actual stored in mem"
+        last_samples = [buff[:num_samples] for buff in self.all_buffers]
+        # Add next_obs:
+        last_samples.append(
+            self.all_buffers[self.states_index][:num_samples].np_zero_roll(
+                -1, inplace=False
+            )
+        )
+        return last_samples
 
     def get_last_samples(self, num_samples=None):
         """return all last episode samples, or specified num samples"""
@@ -644,25 +809,31 @@ class ExperienceReplay:
         if num_samples is None:
             "return last episode"
 
-            dones = np.where(self.all_buffers[self.dones_index] == True)[0]
+            dones = self.get_episode_end_indices()
             if len(dones) > 1:
                 # exclude the latest done sample
-                first_sample_idx = dones[-2] + 1        # extra_exps
+                first_sample_idx = dones[-2] + 1  # extra_exps
 
             else:
                 # from 0 index to last done(which is also the first..)
                 first_sample_idx = 0
-                last_samples = [buff[first_sample_idx:self.curr_size]
-                                for buff in self.all_buffers]
+                last_samples = [
+                    buff[first_sample_idx : self.curr_size] for buff in self.all_buffers
+                ]
 
         else:
             first_sample_idx = self.curr_size - num_samples
-            last_samples = [buff[first_sample_idx:self.curr_size]
-                            for buff in self.all_buffers]
-            
-        
+            last_samples = [
+                buff[first_sample_idx : self.curr_size] for buff in self.all_buffers
+            ]
+
         # Add next_obs:
-        last_samples.append(self.all_buffers[self.states_index][first_sample_idx:self.curr_size].np_zero_roll(-1, inplace=False))
+        last_samples.append(
+            self.all_buffers[self.states_index][
+                first_sample_idx : self.curr_size
+            ].np_zero_roll(-1, inplace=False)
+        )
+
         return last_samples
 
     def get_all_buffers(self):
@@ -676,7 +847,6 @@ class ExperienceReplay:
         buffers.append(next_obs)
         return buffers
 
-
     def get_buffers_at(self, indices):
         """
         Args:
@@ -685,9 +855,51 @@ class ExperienceReplay:
             The buffers at the given indices
         """
         buffers = self.get_all_buffers()
-        buffers_at = tuple(buff[indices] for buff in buffers)
+        buffers_at = (
+            buffers[0][indices],
+            buffers[1][indices],
+            buffers[2][indices],
+            buffers[3][indices],
+            buffers[4][indices],
+            buffers[5][indices],
+        )
         return buffers_at
 
+    def sample_random_episodes(self, num_episodes: int):
+        """
+        Args:
+            num_episodes: The number of full episodes to return
+        Returns:
+            A batch ofrandom episodes samples
+        """
+
+        ###
+
+        cumsum = self.get_episodes_accumulated_rewards()
+        moved_cumsum = cumsum + np.abs(cumsum.min())
+        moved_cumsum = moved_cumsum / (moved_cumsum.max() + 1e-3)
+        reward_rank = 10 - moved_cumsum * 10
+
+        ###
+
+        end_done_indices = self.get_episode_end_indices()
+        start_indices = self.get_episode_start_indices()
+        stored_episodes = len(end_done_indices)
+
+        weights = 1 / (
+            self.sampled_episodes_count[start_indices].squeeze() + reward_rank
+        )
+        weights = weights / weights.sum()  # np.exp(weights)/np.exp(weights).sum()
+        chosen_episodes_indices = np.random.choice(
+            stored_episodes, num_episodes, replace=False, p=weights.flatten()
+        )
+        episoed_indices = []
+        for i in chosen_episodes_indices:
+            s = start_indices[i]
+            e = end_done_indices[i]
+            episoed_indices.append(np.arange(s, e + 1))  # to inclode the done also
+            self.sampled_episodes_count[s] += 10  # reward_rank[i]
+        return self.get_buffers_at(np.concatenate(episoed_indices).astype(np.int32))
 
     def sample_random_batch(self, sample_size):
         """
@@ -705,6 +917,7 @@ class ForgettingExperienceReplay(ExperienceReplay):
     """
     This class is used to store and sample experience, it forgets old experience in every append.
     """
+
     def __init__(self, capacity, obs_shape, continous_mem=False):
         """
         Args:
@@ -714,15 +927,20 @@ class ForgettingExperienceReplay(ExperienceReplay):
         """
         super().__init__(capacity, obs_shape, continous_mem)
 
-
     def init_buffers(self):
         """
         Initializes the buffers.
         """
         super().init_buffers()
 
-
-    def append(self, curr_obs: ObsWraper, actions: np.array, rewards: np.array, dones: np.array, truncateds: np.array):
+    def append(
+        self,
+        curr_obs: ObsWraper,
+        actions: np.array,
+        rewards: np.array,
+        dones: np.array,
+        truncateds: np.array,
+    ):
         """
         Appends a new sample to the memory.
         Args:
@@ -735,18 +953,19 @@ class ForgettingExperienceReplay(ExperienceReplay):
         num_samples = len(curr_obs)
         self.num_episodes_added = sum(dones)
         curr_obs = ObsWraper(curr_obs)
-        self.all_buffers[self.states_index] = curr_obs #np.array(curr_obs).astype(np.float32)
-        self.all_buffers[self.actions_index]= np.array(actions).astype(np.float32)
-        self.all_buffers[self.reward_index]= np.array(rewards).astype(np.float32)
+        self.all_buffers[self.states_index] = (
+            curr_obs  # np.array(curr_obs).astype(np.float32)
+        )
+        self.all_buffers[self.actions_index] = np.array(actions).astype(np.float32)
+        self.all_buffers[self.reward_index] = np.array(rewards).astype(np.float32)
         self.all_buffers[self.dones_index] = np.array(dones).astype(np.float32)
         self.all_buffers[self.truncated_index] = np.array(truncateds).astype(np.float32)
         self.curr_size = num_samples
 
-
     def get_last_episodes(self, num_episodes):
         """return all last episode samples, or specified num samples"""
         return self.get_all_buffers()
-        
+
 
 def worker(env, conn):
     """
@@ -762,27 +981,27 @@ def worker(env, conn):
     while proc_running:
         cmd, msg = conn.recv()
 
-        if (cmd == "step"):
+        if cmd == "step":
             if done:
                 next_state, _ = env.reset()
 
             next_state, reward, terminated, truncated, _ = env.step(msg)
             conn.send((next_state, reward, terminated, truncated, _))
-            done = terminated or truncated 
+            done = terminated or truncated
             if done:
                 next_state = env.reset()
 
-        elif (cmd == "reset"):
+        elif cmd == "reset":
             conn.send(env.reset())
 
-        elif(cmd == "get_env"):
+        elif cmd == "get_env":
             conn.send(env)
 
-        elif (cmd == "close"):
+        elif cmd == "close":
             proc_running = False
-            return conn.close()
+            return
 
-        elif (cmd == "change_env"):
+        elif cmd == "change_env":
             env = msg
             gc.collect()
             done = False
@@ -790,11 +1009,12 @@ def worker(env, conn):
             raise Exception("Command not implemented")
 
 
-class ParallelEnv():
+class ParallelEnv:
     """
     This class is used to run multiple environments in parallel.
     """
-    def __init__(self, env: gym.Env, num_envs: int, for_val: bool=False):
+
+    def __init__(self, env: gym.Env, num_envs: int):
         """
         Args:
             env: The environment to run in parallel.
@@ -803,13 +1023,13 @@ class ParallelEnv():
         """
         self.num_envs = num_envs
         if num_envs > 1:
-            self.p_env = ParallelEnv_m(env, num_envs, for_val)
+            self.p_env = ParallelEnv_m(env, num_envs)
         else:
             self.p_env = SingleEnv_m(env)
 
     def __del__(self):
         self.p_env.close_procs()
-    
+
     def change_env(self, env):
         """
         Changes the environment to run in parallel.
@@ -852,8 +1072,8 @@ class ParallelEnv():
         self.p_env.render()
 
 
-class ParallelEnv_m():
-    def __init__(self, env, num_envs, for_val=False):
+class ParallelEnv_m:
+    def __init__(self, env, num_envs):
         """
         Args:
             env: The environment to run in parallel.
@@ -861,18 +1081,15 @@ class ParallelEnv_m():
             for_val: If true, the environments will be run in a fixed order to allow for deterministic evaluation.
         """
         self.num_envs = num_envs
-        self.process = namedtuple("Process", field_names=[
-                                  "proc", "connection"])
+        self.process = namedtuple(
+            "Process", field_names=["proc", "connection", "worker_conn"]
+        )
         self.comm = []
         for idx in range(self.num_envs):
             parent_conn, worker_conn = Pipe()
-            if for_val: #only for running orderd validation envs in parallel
-                env.reset()
-                # print(env.game_index)
             proc = Process(target=worker, args=((copy.deepcopy(env)), worker_conn))
             proc.start()
-            self.comm.append(self.process(proc, parent_conn))
-
+            self.comm.append(self.process(proc, parent_conn, worker_conn))
 
     def change_env(self, env):
         """
@@ -882,7 +1099,6 @@ class ParallelEnv_m():
         """
         [p.connection.send(("change_env", copy.deepcopy(env))) for p in self.comm]
 
-
     def get_envs(self):
         """
         Returns:
@@ -891,7 +1107,6 @@ class ParallelEnv_m():
         [p.connection.send(("get_env", "")) for p in self.comm]
         res = [p.connection.recv() for p in self.comm]
         return res
-
 
     def reset(self):
         """
@@ -908,8 +1123,10 @@ class ParallelEnv_m():
             actions: The actions (n, action_shape) to take in the environments.
         """
         # send actions to envs
-        [p.connection.send(("step", action)) for i, p, action in zip(
-            range(self.num_envs), self.comm, actions)]
+        [
+            p.connection.send(("step", action))
+            for i, p, action in zip(range(self.num_envs), self.comm, actions)
+        ]
 
         # Receive response from envs.
         res = [p.connection.recv() for p in self.comm]
@@ -920,27 +1137,34 @@ class ParallelEnv_m():
         _ = np.array(_)
 
         return next_states, rewards, terminated, truncated, _
-    
+
     def render(self):
-        print('Cant draw parallel envs [WIP]')
+        print("Cant draw parallel envs [WIP]")
+
+    def __del__(self):
+        self.close_procs()
 
     def close_procs(self):
         """
         Closes the processes.
         """
-        # print("closed procs of env")
         for p in self.comm:
             try:
                 p.connection.send(("close", ""))
-            except:
+                p.connection.close()
+                p.worker_conn.close()
+            except Exception as e:
+                print("close failed", p)
+                print("close failed -reason:", e)
                 pass
-            
+        self.comm = []
 
 
-class SingleEnv_m():
+class SingleEnv_m:
     """
     This class is used to run a single environment.
     """
+
     def __init__(self, env):
         """
         Args:
@@ -967,8 +1191,11 @@ class SingleEnv_m():
         """
         Resets the environment.
         """
-        s,info = self.env.reset()
-        return [(np.array(s, ndmin=1), info)]
+        s, info = self.env.reset()
+        if type(s) != dict:
+            return [(np.array(s, ndmin=1), info)]
+        else:
+            return [(s, info)]
 
     def step(self, actions):
         """
@@ -978,17 +1205,19 @@ class SingleEnv_m():
         """
         action = None
         try:
-          iter(actions)
-          action = actions[0]
+            iter(actions)
+            action = actions[0]
         except TypeError:
-          action = actions
+            action = actions
         next_states, rewards, terminated, trunc, _ = self.env.step(action)
-        next_states = np.array(next_states, ndmin=2)
+        if type(next_states) != dict:
+            next_states = np.array(next_states, ndmin=2)
+        else:
+            next_states = [next_states]
         rewards = np.array(rewards, ndmin=1)
-        terminated = np.array(terminated,ndmin=1)
+        terminated = np.array(terminated, ndmin=1)
         trunc = np.array(trunc, ndmin=1)
         return next_states, rewards, terminated, trunc, _
-
 
     def render(self):
         """
@@ -1001,3 +1230,66 @@ class SingleEnv_m():
         Closes the processes[actually is a noop in this case].
         """
         pass
+
+
+import pandas as pd
+
+
+class TrainMetrics:
+    def __init__(self):
+        """
+        Args:
+            metrics: The metrics to store.
+        """
+        self.metrics = defaultdict(list)
+        self.epoch_metrics = defaultdict(list)
+
+    def add(self, metric_name, value):
+        """
+        Adds a metric to the metrics.
+        Args:
+            metric_name: The name of the metric.
+            value: The value of the metric.
+        """
+        self.epoch_metrics[metric_name].append(value)
+
+    def on_epoch_end(self):
+        """
+        Adds a metric to the metrics.
+        Args:
+            metric_name: The name of the metric.
+            value: The value of the metric.
+        """
+        for k in self.epoch_metrics.keys():
+            self.metrics[k].append(
+                sum(self.epoch_metrics[k]) / len(self.epoch_metrics[k])
+            )
+        self.epoch_metrics = defaultdict(list)
+
+    def get_metrcis_df(self):
+        """
+        Returns:
+            The metrics as a dataframe.
+        """
+        return pd.DataFrame(self.metrics)
+
+    def __iter__(self):
+        """
+        Returns:
+            An iterator over the metrics.
+        """
+        return iter(self.metrics)
+
+    def __next__(self):
+        """
+        Returns:
+        An iterator over the metrics.
+        """
+        return next(self.metrics)
+
+    def __getitem__(self, key):
+        """
+        Returns:
+        An iterator over the metrics.
+        """
+        return self.metrics[key]

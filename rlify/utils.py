@@ -1,47 +1,57 @@
 import torch
 import pandas as pd
 import numpy as np
-import plotly.express as px
-import plotly.io as pio
-
 import os, sys
+
 
 class HiddenPrints:
     def __enter__(self):
         self._original_stdout = sys.stdout
-        sys.stdout = open(os.devnull, 'w')
+        sys.stdout = open(os.devnull, "w")
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         sys.stdout.close()
         sys.stdout = self._original_stdout
 
 
-def init_torch(device='cuda'):
-    if device == 'cpu':
+def init_torch(device="cuda"):
+    """
+    Initializes torch device
+
+    Args:
+    device (str): device to use
+
+    Returns:
+    torch.device: torch device
+    """
+    if device == "cpu":
         return device
     torch.backends.cudnn.benchmark = True
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     return device
 
-def plot_res(vec, title, smooth_kernel=20, render_as="notebook"):
-    fig = px.line(x=range(len(np.convolve(vec, np.ones(smooth_kernel)/smooth_kernel,mode='valid'))), y=np.convolve(vec, np.ones(smooth_kernel)/smooth_kernel, mode='valid'), title=title)
-    # fig.show(render_mode='webgl')
-    fig.show(render_as, render_mode='webgl')
 
+def plot_res(
+    train_stats: dict, title: str, smooth_kernel: int = 20, render_as: str = "notebook"
+):
+    """
+    Plots the training stats
 
-def plot_log_loss(path, smooth_kernel=(7)):
-    with open(path) as f:
-        lines = f.readlines()
-    data = {'y_train':[], 'y_val': []}
-    for l in lines:
-        if "axe" not in l.lower():
-            if 'train' in l.lower():
-                number = float(l.split(":")[-1])
-                data['y_train'].append(number)
-            if 'val' in l.lower():
-                number = float(l.split(":")[-1])
-                data['y_val'].append(number)
-    data['y_val'] =  y=np.convolve(data['y_val'], np.ones(smooth_kernel)/smooth_kernel, mode='valid')
-    data['y_train'] =  y=np.convolve(data['y_train'], np.ones(smooth_kernel)/smooth_kernel, mode='valid')
-    # data['x'] = len(data['y_val'])
-    pd.DataFrame(data).plot().show()
+    Args:
+    train_stats (dict): training stats
+    title (str): title for the plot
+    smooth_kernel (int): kernel size for smoothing
+    render_as (str): render mode
+    """
+    kernel = np.ones(smooth_kernel) / smooth_kernel
+    r_vec = train_stats["rewards"]
+    eps = train_stats["exploration_eps"] * 100
+    r_vec = np.convolve(r_vec, kernel, mode="valid")
+    eps = np.convolve(eps, kernel, mode="valid")
+    x = range(len(r_vec))
+    fig = pd.DataFrame(index=x, data={"rewards": r_vec, "exploration_eps": eps}).plot(
+        backend="plotly",
+        title=title,
+        labels={"index": "episode_num", "exploration_eps": "exploration_eps %"},
+    )
+    fig.show(render_as, render_mode="webgl")

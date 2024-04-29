@@ -28,11 +28,13 @@ And many more features!
 
 A short summery of curr supported:
 
-| Algorithm       | Discrete action | Continuous action | Recurrent architectures     |
-| --------------- | --------------- | ----------------- | ---------------------------- |
-| cliped-PPO      | Yes             | Yes               | Yes                          |
-| DQN (ddqn)      | Yes             | No                | Yes                          |
-| Heuristic Agent | Yes             | Yes               | Human-logic - can save state |
+| Algorithm         | Discrete action | Continuous action | Recurrent architectures     |
+| ----------------- | --------------- | ----------------- | ---------------------------- |
+| cliped-PPO        | Yes             | Yes               | Yes                          |
+| VDQN (vanila DQN) | yes             | No                | Yes                          |
+| DQN (ddqn)        | Yes             | No                | Yes                          |
+| DDPG              | Yes             | Yes               | Yes                          |
+| Heuristic Agent   | Yes             | Yes               | Human-logic - can save state |
 
 ## Work in Progress
 

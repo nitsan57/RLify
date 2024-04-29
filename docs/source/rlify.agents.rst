@@ -11,6 +11,14 @@ rlify.agents.drl\_agent module
    :undoc-members:
    :show-inheritance:
 
+rlify.agents.vdqn\_agent module
+-------------------------------
+
+.. automodule:: rlify.agents.vdqn_agent
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 rlify.agents.dqn\_agent module
 ------------------------------
 
@@ -19,6 +27,13 @@ rlify.agents.dqn\_agent module
    :undoc-members:
    :show-inheritance:
 
+rlify.agents.ddpg\_agent module
+-------------------------------
+
+.. automodule:: rlify.agents.ddpg_agent
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
 rlify.agents.ppo\_agent module
 ------------------------------
