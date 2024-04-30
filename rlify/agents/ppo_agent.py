@@ -102,7 +102,7 @@ class PPO_Agent(RL_Agent):
 
         return {
             "critic_nn": {
-                "input_shape": obsDQN_Agent_space,
+                "input_shape": obs_space,
                 "out_shape": (1,),
             },
             "policy_nn": {
