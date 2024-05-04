@@ -8,7 +8,7 @@ from .action_spaces_utils import MCAW, MDA
 from .explorers import Explorer, RandomExplorer
 from .drl_agent import RL_Agent
 import adabelief_pytorch
-from utils import HiddenPrints
+from rlify.utils import HiddenPrints
 from collections import defaultdict
 
 

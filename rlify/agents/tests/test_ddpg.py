@@ -1,7 +1,3 @@
-import os
-import sys
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
 from rlify.agents.explorers import RandomExplorer
 from rlify.models import fc, rnn
 from rlify.agents.ddpg_agent import DDPG_Agent
@@ -91,7 +87,7 @@ def test_single(env_name, num_parallel_envs, is_rnn):
 
 
 def main():
-    test_single("Taxi-v3", 4, True)
+    test_single("MountainCarContinuous-v0", 4, True)
 
 
 if __name__ == "__main__":
