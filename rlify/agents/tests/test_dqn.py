@@ -13,16 +13,15 @@ from rlify.agents.tests.test_cases import generate_test_cases
     generate_test_cases(continuous_envs=False),
 )
 def test_single(env_name, num_parallel_envs, is_rnn):
-    def test_single(env_name, num_parallel_envs, is_rnn):
-        """
-        Test DQN agent on a single environment
+    """
+    Test DQN agent on a single environment
 
-        Args:
-        env_name: str: name of the environment
-        num_parallel_envs: int: number of parallel environments
-        is_rnn: bool: whether to use RNN or not
+    Args:
+    env_name: str: name of the environment
+    num_parallel_envs: int: number of parallel environments
+    is_rnn: bool: whether to use RNN or not
 
-        """
+    """
 
     env = gym.make(env_name)
     models_shapes = DQN_Agent.get_models_input_output_shape(

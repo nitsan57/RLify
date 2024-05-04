@@ -4,3 +4,4 @@
 tensorboard/
 .vscode/
 html/
+*.egg-info/
