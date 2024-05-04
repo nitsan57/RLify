@@ -5,7 +5,7 @@ from rlify.agents.agent_utils import ObsShapeWraper
 from rlify.agents.dqn_agent import DQN_Agent
 import adabelief_pytorch
 from rlify.models.base_model import BaseModel
-from utils import HiddenPrints
+from rlify.utils import HiddenPrints
 import copy
 
 
@@ -96,6 +96,9 @@ class DDPG_Agent(DQN_Agent):
                 "out_shape": (int(np.prod(action_space.shape)),),
             },
         }
+
+    def check_action_space(self):
+        return True, None
 
     def set_train_mode(self):
         super().set_train_mode()

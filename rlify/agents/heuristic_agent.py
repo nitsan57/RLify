@@ -1,15 +1,8 @@
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import numpy as np
-
 from rlify.agents.explorers import Explorer, HeuristicExplorer, RandomExplorer
-from .agent_utils import ExperienceReplay
 
 # from .action_spaces_utils import CAW
 from .drl_agent import RL_Agent
-from utils import HiddenPrints
-from collections import defaultdict
 
 
 class Heuristic_Agent(RL_Agent):
@@ -59,6 +52,12 @@ class Heuristic_Agent(RL_Agent):
         Does nothing in this agent.
         """
         return {}
+
+    def set_train_mode(self):
+        return super().set_train_mode()
+
+    def set_eval_mode(self):
+        return super().set_eval_mode()
 
     def save_agent(self, f_name) -> dict:
         save_dict = super().save_agent(f_name)

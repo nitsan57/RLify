@@ -1,7 +1,3 @@
-import os
-import sys
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
 from rlify.models import fc, rnn
 from rlify.agents.ppo_agent import PPO_Agent
 import torch

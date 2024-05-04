@@ -1,7 +1,3 @@
-import os
-import sys
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
 from rlify.agents.explorers import RandomExplorer
 from rlify.models import fc, rnn
 from rlify.agents.dqn_agent import DQN_Agent
