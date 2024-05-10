@@ -12,13 +12,9 @@ For usage examples, please check `getting-started.ipynb`.
 
 ## Features
 
-- **Algorithm Support**: Currently, RLify supports the following algorithms:
-
-  - Proximal Policy Optimization (PPO)
-  - Deep Q-Network (DDQN)
 - **Gym API Compatibility**: RLify is designed to work seamlessly with environments that implement the OpenAI Gym API.
 - **Customizable Agents**: You can create and extend your own agent by overriding certain functions.
-- **Neural Network Flexibility**: It's straightforward to integrate your own neural network models, including recurrent models. RLify's agent implementations fully support these.
+- **Neural Network Flexibility**: It's straightforward to integrate your own neural network models, including recurrent models. RLify's agent implementations fully support these, and you can use extrenal networks that inherit from pytorch.
 - **Customizable Intrinsic Reward**: Overriding agent's intrinsic reward is as simple as using `agent.set_intrinsic_reward_func()`.
 - **Override Exploration Method Using heuristic functions**: Overriding exploration method from random choice to some user inputed heurstic to speed up train in certein env `HeuristicExplorer()`.
 - **Observation Flexibility**: RLify supports dictionary format for observations.
