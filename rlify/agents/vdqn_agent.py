@@ -70,10 +70,7 @@ class VDQN_Agent(RL_Agent):
         Initializes the Q Model and optimizer.
         """
         self.Q_model = self.Q_model.to(self.device)
-        with HiddenPrints():
-            self.optimizer = adabelief_pytorch.AdaBelief(
-                self.Q_model.parameters(), self.lr, print_change_log=False, amsgrad=True
-            )
+        self.optimizer = optim.Adam(self.Q_model.parameters(), lr=self.lr)
 
     @staticmethod
     def get_models_input_output_shape(obs_space, action_space) -> dict:
@@ -100,10 +97,7 @@ class VDQN_Agent(RL_Agent):
         super().set_eval_mode()
         self.Q_model.eval()
 
-    def best_act_cont(self, observations: np.array, num_obs: int = 1):
-        raise NotImplementedError("currently is not supported continuous space in dqn")
-
-    def best_act_discrete(self, observations, num_obs=1):
+    def best_act(self, observations, num_obs=1):
         all_actions = self.act_base(observations, num_obs=num_obs)
         selected_actions = (
             torch.argmax(all_actions, -1).detach().cpu().numpy().astype(np.int32)
@@ -136,10 +130,8 @@ class VDQN_Agent(RL_Agent):
         """
         states = self.pre_process_obs_for_act(observations, num_obs)
         with torch.no_grad():
-            self.Q_model.eval()
             all_actions_values = self.Q_model(states, torch.ones((num_obs, 1)))
             all_actions_values = torch.squeeze(all_actions_values, 1)
-        self.Q_model.train()
 
         return all_actions_values
 

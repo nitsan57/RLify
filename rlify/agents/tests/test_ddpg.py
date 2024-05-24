@@ -73,7 +73,7 @@ def test_single(env_name, num_parallel_envs, is_rnn):
         Q_model=Q_model,
         Q_mle_model=Q_mle_model,
         discount_factor=0.99,
-        explorer=RandomExplorer(1, 0.05, 0.01),
+        explorer=RandomExplorer(0.5, 0.05, 0.01),
         tensorboard_dir="/tmp/ddpg/ddpg_test_tensorboard/",
         num_epochs_per_update=20,
         target_update="soft[tau=0.05]",

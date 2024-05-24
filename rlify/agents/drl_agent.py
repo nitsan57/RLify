@@ -80,18 +80,9 @@ class RL_Agent(ABC):
         self.reward_normalization = reward_normalization
         self.max_reward = 0
 
-        self.norm_params = {}  # copy.copy(norm_params)
         self.obs_space = obs_space
         self.obs_shape = ObsShapeWraper(obs_space)  # obs_shape
         self.discount_factor = discount_factor
-        # norm_params (dict, optional): normalization parameters. Defaults to {} - currently.
-        norm_params = {}
-        if norm_params is None:
-            norm_params = {"mean": {}, "std": {}}
-            for k in self.obs_shape.keys():
-                norm_params["mean"] = ObsWraper({k: 0})
-                norm_params["std"] = ObsWraper({k: 1})
-        self.norm_params = norm_params
         self.batch_size = batch_size
         self.num_parallel_envs = (
             batch_size if num_parallel_envs is None else num_parallel_envs
@@ -190,10 +181,6 @@ class RL_Agent(ABC):
         self.n_actions, self.possible_actions = RL_Agent.read_action_space_properties(
             action_space
         )
-        if self.possible_actions == "continuous":
-            self.best_act = self.best_act_cont
-        else:
-            self.best_act = self.best_act_discrete
 
     def __del__(self):
         """
@@ -218,7 +205,6 @@ class RL_Agent(ABC):
             "obs_space": self.obs_space,
             "obs_shape": self.obs_shape,
             "action_space": self.action_space,
-            "norm_params": self.norm_params,
             "discount_factor": self.discount_factor,
         }
         try:
@@ -238,7 +224,6 @@ class RL_Agent(ABC):
         self.action_space = checkpoint["action_space"]
         self.obs_space = checkpoint["obs_space"]
         self.obs_shape = checkpoint["obs_shape"]
-        self.norm_params = checkpoint["norm_params"]
         self.discount_factor = checkpoint["discount_factor"]
         self.define_action_space(self.action_space)
 
@@ -426,22 +411,9 @@ class RL_Agent(ABC):
         return "/tmp/best_{}.pt".format(self.id)
 
     @abstractmethod
-    def best_act_discrete(self, observations, num_obs=1):
+    def best_act(self, observations, num_obs=1):
         """
-        The best actions in a discrete action space
-
-        Args:
-            observations: The observations to act on
-            num_obs: The number of observations to act on
-        Returns:
-            The highest probabilty action to be taken in a detrministic way
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def best_act_cont(self, observations, num_obs=1):
-        """
-        The best actions in a continiuos action space
+        The highest probabilities actions in a detrminstic way
 
         Args:
             observations: The observations to act on
@@ -455,7 +427,6 @@ class RL_Agent(ABC):
         """
         Normalizes the observations according to the pre given normalization parameters [future api - currently not availble]
         """
-        # ObsWraper(observations)
         return observations
         return (observations - self.norm_params["mean"]) / self.norm_params["std"]
 

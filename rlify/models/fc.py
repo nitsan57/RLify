@@ -11,12 +11,15 @@ class FC(BaseModel):
 
     def __init__(self, embed_dim=64, depth=2, activation=nn.ReLU(), *args, **kwargs):
         """
+
         Args:
-        embed_dim: int: the embedding dimension
-        depth: int: the depth of the model
-        activation: torch.nn.Module: the activation function
-        *args: args: args to pass to the base class
-        **kwargs: kwargs: kwargs to pass to the base class
+            embed_dim: int: the embedding dimension
+            depth: int: the depth of the model
+            activation: torch.nn.Module: the activation function
+            *args: args: args to pass to the base class
+            **kwargs: kwargs: kwargs to pass to the base class
+
+
         """
         super().__init__(*args, **kwargs)
 
@@ -48,11 +51,9 @@ class FC(BaseModel):
 
         res_dict = dict()
         for k in x:
-            layer = self.l1[k]
             layer_in = torch.flatten(x[k], start_dim=1)
-            out = layer(layer_in)
-            layer = self.embed_layer[k]
-            out = layer(out)
+            out = self.l1[k](layer_in)
+            out = self.embed_layer[k](out)
             res_dict[k] = out
 
         res = torch.cat(list(res_dict.values()), 1)

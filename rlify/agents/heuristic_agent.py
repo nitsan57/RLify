@@ -84,10 +84,7 @@ class Heuristic_Agent(RL_Agent):
         ), f"The explorer heuristic functions does not returns the correct number of actions (batch dim) expected: {num_obs}, got: {explore_action.shape[0]}"
         return self.return_correct_actions_dim(explore_action, num_obs)
 
-    def best_act_discrete(self, observations, num_obs=1):
-        return self.act(observations, num_obs=num_obs)
-
-    def best_act_cont(self, observations, num_obs=1):
+    def best_act(self, observations, num_obs=1):
         return self.act(observations, num_obs=num_obs)
 
     def reset_rnn_hidden(

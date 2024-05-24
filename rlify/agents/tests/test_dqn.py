@@ -74,7 +74,7 @@ def test_single(env_name, num_parallel_envs, is_rnn):
         lr=3e-4,
         Q_model=Q_model,
         discount_factor=0.99,
-        explorer=RandomExplorer(1, 0.05, 0.01),
+        explorer=RandomExplorer(0.5, 0.05, 0.01),
         num_epochs_per_update=20,
         tensorboard_dir="/tmp/dqn/dqn_test_tensorboard",
         target_update="soft[tau=0.01]",

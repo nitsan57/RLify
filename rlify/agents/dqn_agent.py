@@ -75,6 +75,7 @@ class DQN_Agent(VDQN_Agent):
 
     def set_train_mode(self):
         super().set_train_mode()
+        self.target_Q_model.train()
 
     def set_eval_mode(self):
         super().set_eval_mode()
@@ -113,16 +114,6 @@ class DQN_Agent(VDQN_Agent):
             )
         self.target_Q_model.eval()
 
-    def best_act_cont(self, observations, num_obs=1):
-        return self.act(observations, num_obs)
-
-    def best_act_discrete(self, observations, num_obs=1):
-        all_actions = self.act_base(observations, num_obs=num_obs)
-        selected_actions = (
-            torch.argmax(all_actions, -1).detach().cpu().numpy().astype(np.int32)
-        )
-        return self.return_correct_actions_dim(selected_actions, num_obs)
-
     def save_agent(self, f_name) -> dict:
         save_dict = super().save_agent(f_name)
         torch.save(save_dict, f_name)
@@ -132,29 +123,6 @@ class DQN_Agent(VDQN_Agent):
         checkpoint = super().load_agent(f_name)
         DQN_Agent.hard_target_update(self, manual_update=True)
         return checkpoint
-
-    def act_base(self, observations, num_obs=1):
-        states = self.pre_process_obs_for_act(observations, num_obs)
-        with torch.no_grad():
-            self.Q_model.eval()
-            all_actions = self.Q_model(states, torch.ones((num_obs, 1)))
-            all_actions = torch.squeeze(all_actions, 1)
-        self.Q_model.train()
-
-        return all_actions
-
-    def act(self, observations, num_obs=1) -> np.ndarray:
-        if not self.soft_exploit:
-            return self.best_act(observations, num_obs=num_obs)
-        all_actions = self.act_base(observations, num_obs=num_obs)
-        selected_actions = (
-            torch.multinomial(torch.softmax(all_actions, 1), 1)
-            .detach()
-            .cpu()
-            .numpy()
-            .astype(np.int32)
-        )
-        return self.return_correct_actions_dim(selected_actions, num_obs)
 
     def reset_rnn_hidden(
         self,

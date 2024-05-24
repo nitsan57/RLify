@@ -14,7 +14,13 @@ class DDPG_Agent(DQN_Agent):
     DQN Agent
     """
 
-    def __init__(self, Q_mle_model: BaseModel, *args, **kwargs):
+    def __init__(
+        self,
+        Q_mle_model: BaseModel,
+        target_update: str = "soft[tau=0.05]",
+        *args,
+        **kwargs,
+    ):
         """
 
         Example::
@@ -44,7 +50,7 @@ class DDPG_Agent(DQN_Agent):
 
         """
         self.Q_mle_model = Q_mle_model
-        super().__init__(*args, **kwargs)
+        super().__init__(target_update=target_update, *args, **kwargs)
 
     def setup_models(self):
         """
@@ -73,10 +79,7 @@ class DDPG_Agent(DQN_Agent):
         for p in self.target_Q_mle_model.parameters():
             p.requires_grad = False
 
-        with HiddenPrints():
-            self.q_mle_optimizer = adabelief_pytorch.AdaBelief(
-                self.Q_mle_model.parameters(), self.lr * 0.5, amsgrad=True
-            )
+        self.q_mle_optimizer = optim.Adam(self.Q_mle_model.parameters(), lr=self.lr)
 
     @staticmethod
     def get_models_input_output_shape(obs_space, action_space) -> dict:
@@ -103,6 +106,7 @@ class DDPG_Agent(DQN_Agent):
     def set_train_mode(self):
         super().set_train_mode()
         self.Q_mle_model.train()
+        self.target_Q_mle_model.train()
 
     def set_eval_mode(self):
         super().set_eval_mode()
@@ -149,30 +153,8 @@ class DDPG_Agent(DQN_Agent):
                 self.tau * local_param.data + (1.0 - self.tau) * target_param.data
             )
 
-    def best_act_cont(
-        self, observations: [np.array, torch.tensor], num_obs: int = 1
-    ) -> np.array:
-        with torch.no_grad():
-            actor_acts = self.actor_action(
-                observations, torch.ones((num_obs, 1)), num_obs
-            )
-
-        return self.return_correct_actions_dim(
-            actor_acts.unsqueeze(-1).detach().cpu().numpy().astype(float), num_obs
-        )
-
-    def best_act_discrete(
-        self, observations: [np.array, torch.tensor], num_obs: int = 1
-    ) -> np.array:
-
-        with torch.no_grad():
-            actor_acts = self.actor_action(
-                observations, torch.ones((num_obs, 1)), num_obs
-            )
-            actor_acts = actor_acts + actor_acts.round().detach() - actor_acts.detach()
-        return self.return_correct_actions_dim(
-            actor_acts.unsqueeze(-1).detach().cpu().numpy().astype(float), num_obs
-        )
+    def best_act(self, observations, num_obs=1):
+        return self.act(observations, num_obs)
 
     def reset_rnn_hidden(
         self,
@@ -251,15 +233,17 @@ class DDPG_Agent(DQN_Agent):
             actions_values = self.Q_model(states, dones).squeeze(-1)
         return actions_values
 
-    def act(self, observations: [np.array], num_obs: int = 1):
+    def act(self, observations: np.array, num_obs: int = 1):
         with torch.no_grad():
             actor_acts = self.actor_action(
                 observations, torch.ones((num_obs, 1)), num_obs
             )
-        a = self.return_correct_actions_dim(
-            actor_acts.unsqueeze(-1).detach().cpu().numpy().astype(np.float32), num_obs
+            if self.possible_actions != "continuous":
+                actor_acts = actor_acts.round()
+        actions = self.return_correct_actions_dim(
+            actor_acts.unsqueeze(-1).detach().cpu().numpy(), num_obs
         )
-        return a
+        return actions
 
     def update_policy(self, *exp):
         """
@@ -272,8 +256,8 @@ class DDPG_Agent(DQN_Agent):
         else:
             states, actions, rewards, dones, truncated, next_states, returns = exp
         all_samples_len = len(states)
-        b_size = all_samples_len if self.Q_model.is_rnn else self.batch_size
-        for g in range(self.num_epochs_per_update):
+        b_size = len(states) if self.Q_model.is_rnn else self.batch_size
+        for e in range(self.num_epochs_per_update):
             terminated = dones * (1 - truncated)
             for b in range(0, all_samples_len, b_size):
                 batched_states = states[b : b + b_size]
@@ -283,7 +267,9 @@ class DDPG_Agent(DQN_Agent):
                 batched_dones = dones[b : b + b_size]
                 batched_terminated = terminated[b : b + b_size]
                 batched_returns = returns[b : b + b_size]
+                not_terminated = 1 - batched_terminated
                 real_batch_size = batched_states.len
+
                 q_values = self.get_actor_action_value(
                     batched_states, batched_dones, batched_actions, use_target=False
                 )
@@ -292,7 +278,7 @@ class DDPG_Agent(DQN_Agent):
                         batched_next_states,
                         batched_dones,
                         real_batch_size,
-                        use_target=False,
+                        use_target=True,
                     )
                     q_next = self.get_actor_action_value(
                         batched_next_states,
@@ -300,7 +286,6 @@ class DDPG_Agent(DQN_Agent):
                         actor_next_action,
                         use_target=True,
                     )
-                not_terminated = 1 - batched_terminated
                 expected_next_values = (
                     batched_rewards
                     + (not_terminated * self.discount_factor) * q_next.detach()
@@ -310,9 +295,7 @@ class DDPG_Agent(DQN_Agent):
                     self.criterion(q_values, expected_next_values)
                     + self.dqn_reg * q_values.pow(2).mean()
                 )
-                self.optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                self.optimizer.step()
+
                 batched_states = states[b : b + b_size]
                 actor_action = self.actor_action(
                     batched_states, batched_dones, real_batch_size, use_target=False
@@ -320,10 +303,15 @@ class DDPG_Agent(DQN_Agent):
                 actor_values = self.get_actor_action_value(
                     batched_states, batched_dones, actor_action, use_target=False
                 )
-                actor_loss = -actor_values.mean()
+                actor_loss = -(actor_values.mean())
                 self.q_mle_optimizer.zero_grad(set_to_none=True)
                 actor_loss.backward()  # simple maximisze of actor reward (without changing Q function)
                 self.q_mle_optimizer.step()
+
+                self.optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                self.optimizer.step()
+
                 self.update_target()
                 self.metrics.add("q_loss", loss.item())
                 self.metrics.add("actor_loss", actor_loss.item())

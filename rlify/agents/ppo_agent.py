@@ -74,6 +74,10 @@ class PPO_Agent(RL_Agent):
         self.losses = []
         self.entropy_coeff = entropy_coeff
         self.criterion = nn.MSELoss().to(self.device)
+        if self.possible_actions == "continuous":
+            self.best_act_func = self.best_act_cont
+        else:
+            self.best_act_func = self.best_act_discrete
 
     def set_train_mode(self):
         super().set_train_mode()
@@ -178,15 +182,15 @@ class PPO_Agent(RL_Agent):
     def set_num_parallel_env(self, num_parallel_envs):
         super().set_num_parallel_env(num_parallel_envs)
 
-    def best_act_discrete(self, observations, num_obs=1):
+    def best_act(self, observations, num_obs=1):
+        return self.best_act_func(observations, num_obs)
 
+    def best_act_discrete(self, observations, num_obs=1):
         states = self.pre_process_obs_for_act(observations, num_obs)
 
         with torch.no_grad():
             actions_dist = self.actor_model(states, torch.ones((num_obs, 1)))
-        selected_actions = (
-            torch.argmax(actions_dist.probs, 1).detach().cpu().numpy().astype(np.int32)
-        )
+        selected_actions = torch.argmax(actions_dist.probs, 1).detach().cpu().numpy()
         return self.return_correct_actions_dim(selected_actions, num_obs)
 
     def best_act_cont(self, observations, num_obs=1):
@@ -195,7 +199,7 @@ class PPO_Agent(RL_Agent):
         with torch.no_grad():
             actions_dist = self.actor_model(states, torch.ones((num_obs, 1)))
 
-        selected_actions = actions_dist.loc.detach().cpu().numpy().astype(float)
+        selected_actions = actions_dist.loc.detach().cpu().numpy()
         return self.return_correct_actions_dim(selected_actions, num_obs)
 
     def act(self, observations, num_obs=1):
@@ -207,7 +211,7 @@ class PPO_Agent(RL_Agent):
             )
             action = actions_dist.sample()
 
-        selected_actions = action.detach().cpu().numpy().astype(float)
+        selected_actions = action.detach().cpu().numpy()
 
         return self.return_correct_actions_dim(selected_actions, num_obs)
 
