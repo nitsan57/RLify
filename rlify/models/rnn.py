@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-from rlify.agents.agent_utils import ObsWraper
+from rlify.agents.agent_utils import ObsWrapper
 from .base_model import BaseModel
 
 
@@ -20,7 +20,7 @@ def pack_from_done_indices(data, dones):
     b = done_indices
     max_colected_len = np.max(sorted_seq_lens)
 
-    packed_obs = ObsWraper()
+    packed_obs = ObsWrapper(tensors=True)
     for k in data:
         obs_shape = data[k][-1].shape
         temp = []
@@ -97,7 +97,8 @@ class GRU(ReccurentLayer):
             **kwargs: kwargs: kwargs to pass to the base
         """
         super().__init__(*args, **kwargs)
-
+        self.hidden_dim = hidden_dim
+        self.num_grus = num_grus
         self.input_size_dict = {
             k: np.prod(self.input_shape[k]) for k in self.input_shape
         }

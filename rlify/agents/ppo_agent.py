@@ -152,9 +152,9 @@ class PPO_Agent(RL_Agent):
     def save_agent(self, f_name) -> dict:
         save_dict = super().save_agent(f_name)
         save_dict["actor_optimizer"] = self.actor_optimizer.state_dict()
-        save_dict["policy_nn"] = self.policy_nn.state_dict()
+        save_dict["policy_nn"] = self._generate_nn_save_key(self.policy_nn)
         save_dict["critic_optimizer"] = self.critic_optimizer.state_dict()
-        save_dict["critic_model"] = self.critic_nn.state_dict()
+        save_dict["critic_nn"] = self._generate_nn_save_key(self.critic_nn)
         save_dict["entropy_coeff"] = self.entropy_coeff
         save_dict["discount_factor"] = self.discount_factor
         torch.save(save_dict, f_name)
@@ -162,16 +162,10 @@ class PPO_Agent(RL_Agent):
 
     def load_agent(self, f_name):
         checkpoint = super().load_agent(f_name)
-        self.policy_nn.load_state_dict(checkpoint["policy_nn"])
-        try:
-            self.actor_optimizer.load_state_dict(checkpoint["actor_optimizer"])
-        except:
-            pass
-        self.critic_nn.load_state_dict(checkpoint["critic_model"])
-        try:
-            self.critic_optimizer.load_state_dict(checkpoint["critic_optimizer"])
-        except:
-            pass
+        self.policy_nn.load_state_dict(checkpoint["policy_nn"]["state_dict"])
+        self.actor_optimizer.load_state_dict(checkpoint["actor_optimizer"])
+        self.critic_nn.load_state_dict(checkpoint["critic_nn"]["state_dict"])
+        self.critic_optimizer.load_state_dict(checkpoint["critic_optimizer"])
 
     def reset_rnn_hidden(
         self,

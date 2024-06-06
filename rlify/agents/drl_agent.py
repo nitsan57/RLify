@@ -9,7 +9,7 @@ import functools
 import operator
 from .agent_utils import ParallelEnv, TrainMetrics
 import torch
-from .agent_utils import ExperienceReplay, ObsShapeWraper, ObsWraper
+from .agent_utils import ExperienceReplay, ObsShapeWraper, ObsWrapper
 import uuid
 import logging
 import pandas as pd
@@ -190,6 +190,42 @@ class RL_Agent(ABC):
             self.close_env_procs()
         if hasattr(self, "writer"):
             self.writer.close()
+
+    @staticmethod
+    def read_nn_properties(ckpt_fname):
+        checkpoint = torch.load(ckpt_fname, map_location="cpu")
+        relevant_keys = []
+        for k in checkpoint:
+            if isinstance(checkpoint[k], dict) and "approximated_args" in checkpoint[k]:
+                relevant_keys.append(k)
+        return pd.DataFrame(checkpoint)["critic_nn"][
+            ["approximated_args", "class_type"]
+        ].to_dict()
+
+    def _generate_nn_save_key(self, model: torch.nn.Module):
+        """
+
+        Generates a key for saving the model
+        the key includes the approximated args, class type - for reproducibility and the state dict of the model
+        Args:
+            model: the model to save
+
+        Returns:
+            dictionary: dictionary containing the model's state
+
+        """
+
+        default_module_args = (
+            torch.nn.Module().__dict__.keys() | torch.nn.Module.__dict__.keys()
+        )
+        class_type = str(model.__class__)
+        return {
+            "approximated_args": {
+                k: v for k, v in model.__dict__.items() if k not in default_module_args
+            },
+            "class_type": class_type,
+            "state_dict": model.state_dict(),
+        }
 
     @abstractmethod
     def save_agent(self, f_name: str) -> dict:
@@ -431,7 +467,7 @@ class RL_Agent(ABC):
         return (observations - self.norm_params["mean"]) / self.norm_params["std"]
 
     def pre_process_obs_for_act(
-        self, observations: [np.array, ObsWraper, dict], num_obs: int
+        self, observations: [np.array, ObsWrapper, dict], num_obs: int
     ):
         """
         Pre processes the observations for act
@@ -440,10 +476,10 @@ class RL_Agent(ABC):
             observations: The observations to act on
             num_obs: The number of observations to act on
         Returns:
-            The pre processed observations an ObsWraper object with the right dims
+            The pre processed observations an ObsWrapper object with the right dims
         """
-        if type(observations) != ObsWraper:
-            observations = ObsWraper(observations)
+        if type(observations) != ObsWrapper:
+            observations = ObsWrapper(observations)
 
         len_obs = len(observations)
         if num_obs != len_obs:
@@ -684,3 +720,47 @@ class RL_Agent(ABC):
             "std": all_rewards.std(),
             "all_runs": all_rewards,
         }
+
+    def get_seqs_indices_for_pack(self, done_indices):
+        """
+        calculates the sequence indices for packing the data
+        returns seq_lens, sorted_data_sub_indices
+        """
+        env_indices = np.zeros_like(done_indices, dtype=np.int32)
+        env_indices[0] = -1
+        env_indices[1:] = done_indices[:-1]
+        all_lens = done_indices - env_indices
+        seq_indices = np.argsort(all_lens, kind="stable")[::-1]
+        seq_lens = all_lens[seq_indices]
+        return seq_lens, seq_indices  # , sorted_data_sub_indices
+
+    def pad_from_done_indices(self, data, dones):
+        """
+        Packs the data from the done indices to torch.nn.utils.rnn.PackedSequence
+
+        """
+        done_indices = torch.where(dones == True)[0].cpu().numpy().astype(np.int32)
+        sorted_seq_lens, seq_indices = self.get_seqs_indices_for_pack(
+            done_indices
+        )  # sorted_data_sub_indices
+        rev_indices = seq_indices.argsort()
+        assert np.all(np.sort(sorted_seq_lens, kind="stable")[::-1] == sorted_seq_lens)
+        b = done_indices
+        max_colected_len = np.max(sorted_seq_lens)
+        breakpoint()
+        padded_obs = ObsWrapper(tensors=True)
+        for k in data:
+            obs_shape = data[k][-1].shape
+            temp = []
+            curr_idx = 0
+            for i, d_i in enumerate(done_indices):
+                temp.append(data[k][curr_idx : d_i + 1])
+                curr_idx = d_i + 1  #
+
+            temp = [temp[i] for i in seq_indices]
+            max_new_seq_len = max_colected_len
+            new_lens = sorted_seq_lens
+
+            padded_seq_batch = torch.nn.utils.rnn.pad_sequence(temp, batch_first=True)
+            padded_obs[k] = padded_seq_batch
+        return padded_obs, rev_indices

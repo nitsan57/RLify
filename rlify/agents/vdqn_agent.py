@@ -107,13 +107,13 @@ class VDQN_Agent(RL_Agent):
     def save_agent(self, f_name: str) -> dict:
         save_dict = super().save_agent(f_name)
         save_dict["optimizer"] = self.optimizer.state_dict()
-        save_dict["Q_model"] = self.Q_model.state_dict()
+        save_dict["Q_model"] = self._generate_nn_save_key(self.Q_model)
         torch.save(save_dict, f_name)
         return save_dict
 
     def load_agent(self, f_name):
         checkpoint = super().load_agent(f_name)
-        self.Q_model.load_state_dict(checkpoint["Q_model"])
+        self.Q_model.load_state_dict(checkpoint["Q_model"]["state_dict"])
         self.optimizer.load_state_dict(checkpoint["optimizer"])
         return checkpoint
 

@@ -17,7 +17,7 @@ class DDPG_Agent(DQN_Agent):
     def __init__(
         self,
         Q_mle_model: BaseModel,
-        target_update: str = "soft[tau=0.05]",
+        target_update: str = "soft[tau=0.005]",
         *args,
         **kwargs,
     ):
@@ -166,13 +166,13 @@ class DDPG_Agent(DQN_Agent):
     def save_agent(self, f_name: str) -> dict:
         save_dict = super().save_agent(f_name)
         save_dict["q_mle_optimizer"] = self.q_mle_optimizer.state_dict()
-        save_dict["Q_mle_model"] = self.Q_mle_model.state_dict()
+        save_dict["Q_mle_model"] = self._generate_nn_save_key(self.Q_mle_model)
         torch.save(save_dict, f_name)
         return save_dict
 
     def load_agent(self, f_name: str):
         checkpoint = super().load_agent(f_name)
-        self.Q_mle_model.load_state_dict(checkpoint["Q_mle_model"])
+        self.Q_mle_model.load_state_dict(checkpoint["Q_mle_model"]["state_dict"])
         self.q_mle_optimizer.load_state_dict(checkpoint["q_mle_optimizer"])
         DDPG_Agent.hard_target_update(self, manual_update=True)
         return checkpoint

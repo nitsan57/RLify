@@ -1,5 +1,5 @@
 import numpy as np
-from rlify.agents.agent_utils import ObsWraper
+from rlify.agents.agent_utils import ObsWrapper
 from rlify.agents.heuristic_agent import Heuristic_Agent
 import torch
 import gymnasium as gym
@@ -25,11 +25,11 @@ def test_single(env_name, num_parallel_envs, is_rnn):
 
     env = gym.make(env_name, render_mode=None)
 
-    def heuristic_func(inner_state, obs: ObsWraper):
+    def heuristic_func(inner_state, obs: ObsWrapper):
         # an function that does not keep inner state
         b_shape = len(obs)
         actions = np.zeros((b_shape, 1))  # single discrete action
-        # just a dummy heuristic for a gym env with np.array observations (for more details about the obs object check ObsWraper)
+        # just a dummy heuristic for a gym env with np.array observations (for more details about the obs object check ObsWrapper)
         # the heuristic check whether the first number of each observation is positive, if so, it returns action=1, else 0
         actions[torch.where(obs["data"][:, 0] > 0)[0].cpu()] = 1
         return None, actions

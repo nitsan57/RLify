@@ -2,7 +2,6 @@ import torch
 from abc import ABC, abstractmethod
 import numpy as np
 from rlify.agents.agent_utils import ObsShapeWraper
-from .model_factory import models_db
 
 
 class BaseModel(torch.nn.Module, ABC):
@@ -32,9 +31,6 @@ class BaseModel(torch.nn.Module, ABC):
         Returns the total number of parameters in the model
         """
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
-
-    def __init_subclass__(cls):
-        models_db.register(cls)
 
     @abstractmethod
     def forward(self, x, dones=None):

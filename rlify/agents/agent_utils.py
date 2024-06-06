@@ -77,10 +77,19 @@ class ObsShapeWraper(dict):
             super(ObsShapeWraper, self).__init__({"data": tuple([*res])})
 
 
-class ObsWraper:
+class ObsWrapper:
     """
     A class for wrapping observations, the object is roughly a dict of np.arrays or torch.tensors
     A default key is 'data' for the main data if it in either a np.array or torch.tensor
+
+    Example::
+
+            obs = ObsWrapper({'data':np.array([1,2,3]), 'data2':np.array([4,5,6])})
+            print(obs['data'])
+            print(obs['data2'])
+            print(obs['data'][0])
+            obs = ObsWrapper(np.array([1,2,3]))
+            print(obs['data'])
     """
 
     def __init__(
@@ -101,7 +110,9 @@ class ObsWraper:
         self.len = 0
         self.data = {}
         self.shape = {}
-        if type(data) == ObsWraper:
+        if tensors:
+            self.obj_constructor = torch.tensor
+        if type(data) == ObsWrapper:
             self.data = copy.deepcopy(data.data)
             self.obj_constructor = data.obj_constructor
             self.len = data.len
@@ -114,10 +125,10 @@ class ObsWraper:
             data = np.array(data, ndmin=1).astype(np.float32)
 
         if data is None:
-            return self._init_from_none_()
+            return self._init_from_none_(keep_dims, tensors)
 
         if type(data) == list or type(data) == tuple:
-            if type(data[0]) == ObsWraper:
+            if type(data[0]) == ObsWrapper:
                 return self.init_from_list_obsWrapper_obs(data)
             else:
                 return self.init_from_list_generic_data(data)
@@ -136,7 +147,7 @@ class ObsWraper:
             self.data = {}
 
             for k, v in to_add.items():
-                if tensors or torch.is_tensor(v):
+                if torch.is_tensor(v):
                     self.obj_constructor = torch.tensor
                     v = torch.atleast_1d(v)
                 else:
@@ -169,9 +180,17 @@ class ObsWraper:
                     self.shape[k] = None
 
     def init_from_dict(self, data, keep_dims, tensors):
-        """ """
+        """
+        Initializes from a dict
+
+        Args:
+            data: The data to initialize from
+            keep_dims: Whether to keep the dimensions of the data, if False will add a dimension of batch to the data
+            tensors: Whether to keep the data in torch.tensor
+        """
+
         for k, v in data.items():
-            if tensors or torch.is_tensor(v):
+            if torch.is_tensor(v):
                 self.obj_constructor = torch.tensor
                 v = torch.atleast_1d(v)
             else:
@@ -188,9 +207,9 @@ class ObsWraper:
 
     def init_from_list_obsWrapper_obs(self, obs_list):
         """
-        Initializes from a list of ObsWraper objects
+        Initializes from a list of ObsWrapper objects
         Args:
-            obs_list: The list of ObsWraper objects
+            obs_list: The list of ObsWrapper objects
         """
         obj_constructor = obs_list[0].obj_constructor
         keys = list(obs_list[0].keys())
@@ -235,11 +254,11 @@ class ObsWraper:
         self.len = len(res)
         self.shape["data"] = res.data.shape
 
-    def _init_from_none_(self):
+    def _init_from_none_(self, keep_dims, tensors):
         """
         Initializes an object without data
         """
-        self.__init__({})
+        self.__init__({}, keep_dims, tensors)
 
     def __setitem__(self, key, value):
         """
@@ -299,7 +318,7 @@ class ObsWraper:
                 temp_dict[k] = np.array([v.__getitem__(key)])
             else:
                 temp_dict[k] = np.array(v.__getitem__(key))
-        return ObsWraper(temp_dict)
+        return ObsWrapper(temp_dict)
 
     def slice_tensors(self, key):
         """
@@ -326,7 +345,7 @@ class ObsWraper:
                 temp_dict[k] = (
                     v.__getitem__(key).clone().detach().requires_grad_(True).float()
                 )
-        return ObsWraper(temp_dict, tensors=True)
+        return ObsWrapper(temp_dict, tensors=True)
 
     def keys(self):
         """
@@ -375,7 +394,7 @@ class ObsWraper:
         temp_dict = {}
         for k, v in self.data.items():
             temp_dict[k] = v * other[k]
-        return ObsWraper(temp_dict, keep_dims=True)
+        return ObsWrapper(temp_dict, keep_dims=True)
 
     def __add__(self, other):
         """
@@ -387,7 +406,7 @@ class ObsWraper:
         temp_dict = {}
         for k, v in self.data.items():
             temp_dict[k] = v + other[k]
-        return ObsWraper(temp_dict, keep_dims=True)
+        return ObsWrapper(temp_dict, keep_dims=True)
 
     def __neg__(self):
         """
@@ -396,7 +415,7 @@ class ObsWraper:
         temp_dict = {}
         for k, v in self.data.items():
             temp_dict[k] = -v
-        return ObsWraper(temp_dict, keep_dims=True)
+        return ObsWrapper(temp_dict, keep_dims=True)
 
     def __sub__(self, other):
         """
@@ -408,7 +427,7 @@ class ObsWraper:
         temp_dict = {}
         for k, v in self.data.items():
             temp_dict[k] = v - other[k]
-        return ObsWraper(temp_dict, keep_dims=True)
+        return ObsWrapper(temp_dict, keep_dims=True)
 
     def __truediv__(self, other):
         """
@@ -423,7 +442,7 @@ class ObsWraper:
             other = defaultdict(lambda: float(num))
         for k, v in self.data.items():
             temp_dict[k] = v / other[k]
-        return ObsWraper(temp_dict, keep_dims=True)
+        return ObsWrapper(temp_dict, keep_dims=True)
 
     def unsqueeze(self, dim=0):
         """
@@ -435,7 +454,7 @@ class ObsWraper:
         temp_dict = {}
         for k, v in self.data.items():
             temp_dict[k] = v.unsqueeze(dim)
-        return ObsWraper(temp_dict, keep_dims=True, tensors=True)
+        return ObsWrapper(temp_dict, keep_dims=True, tensors=True)
 
     def squeeze(self, dim=0):
         """
@@ -447,9 +466,9 @@ class ObsWraper:
         temp_dict = {}
         for k, v in self.data.items():
             temp_dict[k] = v.squeeze(dim)
-        return ObsWraper(temp_dict, keep_dims=True, tensors=True)
+        return ObsWrapper(temp_dict, keep_dims=True, tensors=True)
 
-    def get_as_tensors(self, device="cpu"):
+    def get_as_tensors(self, device):
         """
         Args:
             device: The device to put the tensors on
@@ -463,36 +482,19 @@ class ObsWraper:
             elif type(v) == torch.Tensor:
                 temp_dict[k] = v.detach().clone().to(device).float()
 
-        return ObsWraper(temp_dict, keep_dims=True, tensors=True)
+        return ObsWrapper(temp_dict, keep_dims=True, tensors=True)
 
-    def np_cat(self, other, axis=0):
+    def to(self, device):
         """
-        Concatenates the object by another object
         Args:
-            other: The other object to concatenate by
-            concatenates key by key using np.concatenate
+            device: The device to put the tensors on
         Returns:
-            The concatenated object
+            The object as tensors
         """
         temp_dict = {}
         for k, v in self.data.items():
-            temp_dict[k] = np.concatenate([self.data[k], other[k]], axis)
-        return ObsWraper(temp_dict)
-
-    def np_append(self, other, axis=0):
-        """
-        Appends the object by another object
-        Args:
-            other: The other object to append by
-            appends key by key
-        """
-        if self.len != 0:
-            for k, v in self.data.items():
-                self.data[k] = np.concatenate([self.data[k], other[k]], axis)
-            self.len = self.len + len(other)
-        else:
-            self.data = copy.deepcopy(other.data)
-            self.len = other.len
+            temp_dict[k] = v.to(device)
+        return ObsWrapper(temp_dict, keep_dims=True, tensors=True)
 
     def cat(self, other, axis=0):
         """
@@ -507,9 +509,9 @@ class ObsWraper:
                 temp_dict[k] = torch.cat([self.data[k], other[k]], axis)
             else:
                 temp_dict[k] = np.concatenate([self.data[k], other[k]], axis)
-        return ObsWraper(temp_dict)
+        return ObsWrapper(temp_dict)
 
-    def np_zero_roll(self, indx, inplace=False):
+    def np_roll(self, indx, inplace=False):
         """Rolls the data by indx and fills the empty space with zeros - only on axis 0
         Args:
             indx: The index to roll by
@@ -525,25 +527,7 @@ class ObsWraper:
         if inplace:
             self.data = temp_dict
         else:
-            return ObsWraper(temp_dict)
-
-    def np_roll(self, indx, axis=0, inplace=False):
-        """
-        Rolls the data by indx
-        Args:
-            indx: The index to roll by
-            axis: The axis to roll on
-            inplace: Whether to do the roll inplace
-        Returns:
-            The rolled object
-        """
-        temp_dict = {}
-        for k, v in self.data.items():
-            temp_dict[k] = np.roll(self.data[k], indx, axis=axis)
-        if inplace:
-            self.data = temp_dict
-        else:
-            return ObsWraper(temp_dict)
+            return ObsWrapper(temp_dict)
 
 
 class ExperienceReplay:
@@ -581,7 +565,7 @@ class ExperienceReplay:
 
     def append(
         self,
-        curr_obs: ObsWraper,
+        curr_obs: ObsWrapper,
         actions: np.array,
         rewards: np.array,
         dones: np.array,
@@ -598,7 +582,7 @@ class ExperienceReplay:
         # extra_exps
         actions = np.array(actions).reshape(-1, self.n_actions)
 
-        curr_obs = ObsWraper(curr_obs)
+        curr_obs = ObsWrapper(curr_obs)
 
         num_samples = len(curr_obs)
 
@@ -624,7 +608,7 @@ class ExperienceReplay:
             done_index = done_indices[relevant_index]
             self.all_buffers[self.states_index] = self.all_buffers[
                 self.states_index
-            ].np_zero_roll(-done_index - 1, inplace=False)
+            ].np_roll(-done_index - 1, inplace=False)
             self.all_buffers[self.actions_index] = np.concatenate(
                 [
                     self.all_buffers[self.actions_index][-(-done_index - 1) :],
@@ -702,7 +686,7 @@ class ExperienceReplay:
         truncated_buffer = np.zeros((self.capacity), dtype=np.uint8)
         shape = (self.capacity, *self.obs_shape)
 
-        states_buffer = ObsWraper()
+        states_buffer = ObsWrapper()
         for k in self.obs_shape:
             shape = (self.capacity, *self.obs_shape[k])
             states_buffer[k] = np.zeros(shape, dtype=np.float32)
@@ -797,9 +781,7 @@ class ExperienceReplay:
         last_samples = [buff[:num_samples] for buff in self.all_buffers]
         # Add next_obs:
         last_samples.append(
-            self.all_buffers[self.states_index][:num_samples].np_zero_roll(
-                -1, inplace=False
-            )
+            self.all_buffers[self.states_index][:num_samples].np_roll(-1, inplace=False)
         )
         return last_samples
 
@@ -831,7 +813,7 @@ class ExperienceReplay:
         last_samples.append(
             self.all_buffers[self.states_index][
                 first_sample_idx : self.curr_size
-            ].np_zero_roll(-1, inplace=False)
+            ].np_roll(-1, inplace=False)
         )
 
         return last_samples
@@ -842,7 +824,7 @@ class ExperienceReplay:
             All the buffers
         """
         buffers = copy.deepcopy(self.all_buffers)
-        next_obs = buffers[self.states_index].np_zero_roll(-1, inplace=False)
+        next_obs = buffers[self.states_index].np_roll(-1, inplace=False)
 
         buffers.append(next_obs)
         return buffers
@@ -935,7 +917,7 @@ class ForgettingExperienceReplay(ExperienceReplay):
 
     def append(
         self,
-        curr_obs: ObsWraper,
+        curr_obs: ObsWrapper,
         actions: np.array,
         rewards: np.array,
         dones: np.array,
@@ -952,7 +934,7 @@ class ForgettingExperienceReplay(ExperienceReplay):
 
         num_samples = len(curr_obs)
         self.num_episodes_added = sum(dones)
-        curr_obs = ObsWraper(curr_obs)
+        curr_obs = ObsWrapper(curr_obs)
         self.all_buffers[self.states_index] = (
             curr_obs  # np.array(curr_obs).astype(np.float32)
         )

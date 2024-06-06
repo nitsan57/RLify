@@ -22,7 +22,8 @@ class FC(BaseModel):
 
         """
         super().__init__(*args, **kwargs)
-
+        self.embed_dim = embed_dim
+        self.depth = depth
         self.activation = activation
 
         self.l1 = torch.nn.ModuleDict(

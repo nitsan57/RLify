@@ -100,7 +100,7 @@ class HeuristicExplorer(RandomExplorer):
     ) -> None:
         """
         Args:
-            heuristic_function: A function that takes in the inner_state, observation (ObsWraper) and returns a tuple: (inner_state, action) the inner state (could be None) and the action to be taken,
+            heuristic_function: A function that takes in the inner_state, observation (ObsWrapper) and returns a tuple: (inner_state, action) the inner state (could be None) and the action to be taken,
                             please notice that the actions shape is b,n_actions,action_dim
         """
         super().__init__(exploration_epsilon, eps_end, eps_dec)

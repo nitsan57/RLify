@@ -14,20 +14,20 @@ class Heuristic_Agent(RL_Agent):
         """
 
         Args:
-            heuristic_function: A function that takes in the inner_state, observation (ObsWraper) and returns a tuple: (inner_state, action) the inner state (could be None) and the action to be taken,
+            heuristic_function: A function that takes in the inner_state, observation (ObsWrapper) and returns a tuple: (inner_state, action) the inner state (could be None) and the action to be taken,
                                 please notice that the actions shape is b,n_actions,action_dim
-                                Please check more ObsWraper for  more info on the observation input object
+                                Please check more ObsWrapper for  more info on the observation input object
             kwargs: Arguments for the RL_Agent base class
 
         Example::
 
             env_name = "CartPole-v1"
             env_c = gym.make(env_name, render_mode=None)
-            def heuristic_func(inner_state, obs: ObsWraper):
+            def heuristic_func(inner_state, obs: ObsWrapper):
                 # an function that does not keep inner state
                 b_shape = len(obs)
                 actions = np.zeros((b_shape, 1)) # single discrete action
-                # just a dummy heuristic for a gym env with np.array observations (for more details about the obs object check ObsWraper)
+                # just a dummy heuristic for a gym env with np.array observations (for more details about the obs object check ObsWrapper)
                 # the heuristic check whether the first number of each observation is positive, if so, it returns action=1, else 0
                 actions[torch.where(obs['data'][:,0] > 0)[0].cpu()] = 1
                 return None, actions
