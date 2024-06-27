@@ -71,6 +71,7 @@ class VDQN_Agent(RL_Agent):
         """
         self.Q_model = self.Q_model.to(self.device)
         self.optimizer = optim.Adam(self.Q_model.parameters(), lr=self.lr)
+        return [self.Q_model]
 
     @staticmethod
     def get_models_input_output_shape(obs_space, action_space) -> dict:
@@ -117,6 +118,9 @@ class VDQN_Agent(RL_Agent):
         self.optimizer.load_state_dict(checkpoint["optimizer"])
         return checkpoint
 
+    def contains_reccurent_nn(self):
+        return self.Q_model.is_rnn
+
     def act_base(self, observations: np.array, num_obs: int = 1) -> torch.Tensor:
         """
         Returns the Q values for the given observations.
@@ -154,6 +158,9 @@ class VDQN_Agent(RL_Agent):
     ):
         self.Q_model.reset()
 
+    def get_trajectories_data(self):
+        return self._get_dqn_experiences()
+
     def _get_dqn_experiences(self) -> tuple[torch.Tensor]:
         """
         loads experiences from the replay buffer and returns them as tensors.
@@ -162,33 +169,31 @@ class VDQN_Agent(RL_Agent):
             tuple: (states, actions, rewards, dones, truncated, next_states, returns)
 
         """
-        random_samples = not self.Q_model.is_rnn
+        # random_samples = not self.Q_model.is_rnn
         first_experience_batch = self.experience.sample_random_episodes(
             self.num_parallel_envs
         )
         observations, actions, rewards, dones, truncated, next_observations = (
             first_experience_batch
         )
-        returns = calc_returns(rewards, (dones * (1 - truncated)), self.discount_factor)
 
-        rand_perm = torch.randperm(len(observations))
+        # rand_perm = torch.randperm(len(observations))
+        # if random_samples:
+        #     observations = observations[rand_perm]
+        #     actions = actions[rand_perm]
+        #     rewards = rewards[rand_perm]
+        #     dones = dones[rand_perm]
+        #     truncated = truncated[rand_perm]
+        #     next_observations = next_observations[rand_perm]
+        #     returns = returns[rand_perm]
 
-        if random_samples:
-            observations = observations[rand_perm]
-            actions = actions[rand_perm]
-            rewards = rewards[rand_perm]
-            dones = dones[rand_perm]
-            truncated = truncated[rand_perm]
-            next_observations = next_observations[rand_perm]
-            returns = returns[rand_perm]
-
-        actions = torch.from_numpy(actions).to(self.device)
-        rewards = torch.from_numpy(rewards).to(self.device)
-        dones = torch.from_numpy(dones).to(self.device)
-        truncated = torch.from_numpy(truncated).to(self.device)
-        returns = torch.from_numpy(returns).to(self.device)
-        observations = observations.get_as_tensors(self.device)
-        next_observations = next_observations.get_as_tensors(self.device)
+        # actions = torch.from_numpy(actions).to(self.device)
+        # rewards = torch.from_numpy(rewards).to(self.device)
+        # dones = torch.from_numpy(dones).to(self.device)
+        # truncated = torch.from_numpy(truncated).to(self.device)
+        # returns = torch.from_numpy(returns).to(self.device)
+        # observations = observations.get_as_tensors(self.device)
+        # next_observations = next_observations.get_as_tensors(self.device)
 
         return (
             observations,
@@ -197,18 +202,15 @@ class VDQN_Agent(RL_Agent):
             dones,
             truncated,
             next_observations,
-            returns,
         )
 
     def update_policy(self, *exp):
         num_grad_updates = self.num_epochs_per_update
-        if len(exp) == 0:
-            states, actions, rewards, dones, truncated, next_states, returns = (
-                self._get_dqn_experiences()
-            )
-        else:
-            states, actions, rewards, dones, truncated, next_states, returns = exp
+        states, actions, rewards, dones, truncated, next_states = exp
+        returns = calc_returns(rewards, (dones * (1 - truncated)), self.discount_factor)
+        ds = dataset(states, actions, rewards, dones, truncated, next_states)
         for g in range(num_grad_updates):
+            train_dataloader = DataLoader(training_data, batch_size=self.batch_size, shuffle=True)
             terminated = dones * (1 - truncated)
             not_terminated = 1 - terminated
             all_samples_len = len(states)

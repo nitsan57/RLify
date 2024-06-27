@@ -80,6 +80,12 @@ class DDPG_Agent(DQN_Agent):
             p.requires_grad = False
 
         self.q_mle_optimizer = optim.Adam(self.Q_mle_model.parameters(), lr=self.lr)
+        return [
+            self.Q_model,
+            self.target_Q_model,
+            self.Q_mle_model,
+            self.target_Q_mle_model,
+        ]
 
     @staticmethod
     def get_models_input_output_shape(obs_space, action_space) -> dict:
@@ -249,12 +255,7 @@ class DDPG_Agent(DQN_Agent):
         """
         Updates the policy, using the DDPG algorithm.
         """
-        if len(exp) == 0:
-            states, actions, rewards, dones, truncated, next_states, returns = (
-                self._get_dqn_experiences()
-            )
-        else:
-            states, actions, rewards, dones, truncated, next_states, returns = exp
+        states, actions, rewards, dones, truncated, next_states, returns = exp
         all_samples_len = len(states)
         b_size = len(states) if self.Q_model.is_rnn else self.batch_size
         for e in range(self.num_epochs_per_update):

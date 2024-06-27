@@ -9,7 +9,8 @@ import functools
 import operator
 from .agent_utils import ParallelEnv, TrainMetrics
 import torch
-from .agent_utils import ExperienceReplay, ObsShapeWraper, ObsWrapper
+from .agent_utils import ObsShapeWraper, ObsWrapper
+from rlify.agents.experience_replay import ExperienceReplay
 import uuid
 import logging
 import pandas as pd
@@ -20,6 +21,215 @@ import pygame
 
 logger = logging.getLogger(__name__)
 import datetime
+
+from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
+
+
+def pad_from_done_indices(data, dones):
+    """
+    Packs the data from the done indices to torch.nn.utils.rnn.PackedSequence
+
+    """
+    if isinstance(data, ObsWrapper):
+        return pad_states_from_done_indices(data, dones)
+    elif isinstance(data, torch.Tensor):
+        return pad_tensors_from_done_indices(data, dones)
+
+
+def pad_states_from_done_indices(data, dones):
+    """
+    Packs the data from the done indices to torch.nn.utils.rnn.PackedSequence
+
+    """
+    done_indices = torch.where(dones == True)[0].cpu().numpy().astype(np.int32)
+    padded_obs = ObsWrapper(tensors=True)
+    for k in data:
+        temp = []
+        curr_idx = 0
+        for i, d_i in enumerate(done_indices):
+            temp.append(data[k][curr_idx : d_i + 1])
+            curr_idx = d_i + 1  #
+        padded_seq_batch = torch.nn.utils.rnn.pad_sequence(temp, batch_first=True)
+        padded_obs[k] = padded_seq_batch
+    lengths = done_indices - np.roll(done_indices, 1)
+    lengths[0] = done_indices[0]
+    return padded_obs, lengths
+
+
+def pad_tensors_from_done_indices(data, dones):
+    """
+    Packs the data from the done indices to torch.nn.utils.rnn.PackedSequence
+
+    """
+    done_indices = torch.where(dones == True)[0].cpu().numpy().astype(np.int32)
+    temp = []
+    curr_idx = 0
+    for i, d_i in enumerate(done_indices):
+        temp.append(data[curr_idx : d_i + 1])
+        curr_idx = d_i + 1  #
+    padded_seq_batch = torch.nn.utils.rnn.pad_sequence(temp, batch_first=True)
+    padded_obs = padded_seq_batch
+    lengths = done_indices - np.roll(done_indices, 1)
+    lengths[0] = done_indices[0]
+    return padded_obs, lengths
+
+
+class RLDataset(Dataset):
+    def __init__(
+        self, states, actions, rewards, dones, truncated, next_states, prepare_for_rnn
+    ):
+        states, actions, rewards, dones, truncated, next_states = self._prepare_data(
+            states, actions, rewards, dones, truncated, next_states
+        )
+        self.states = states
+        self.actions = actions
+        self.rewards = rewards
+        self.dones = dones
+        self.truncated = truncated
+        self.next_states = next_states
+        self.terminated = dones * (1 - truncated)
+        self.loss_flag = torch.ones_like(rewards)
+        self.prepare_for_rnn = prepare_for_rnn
+        self.max_len = len(states)
+        if self.prepare_for_rnn:
+            (
+                self.states,
+                self.actions,
+                self.rewards,
+                self.dones,
+                self.truncated,
+                self.next_states,
+                self.loss_flag,
+                lengths,
+            ) = self._pad_experiecne(
+                states, actions, rewards, dones, truncated, next_states
+            )
+            self.max_len = lengths.max()
+
+    def __len__(self):
+        return self.max_len
+
+    def _prepare_data(self, states, actions, rewards, dones, truncated, next_states):
+        """
+        Prepares the data for training
+        Args:
+            states: The states
+            actions: The actions
+            rewards: The rewards
+            dones: The dones
+            truncated: The truncateds
+
+        Returns:
+            The prepared data
+        """
+        actions = torch.from_numpy(actions)
+        if len(actions.shape) == 1:
+            actions = actions.unsqueeze(-1)
+        rewards = torch.from_numpy(rewards)
+        dones = torch.from_numpy(dones)
+        truncated = torch.from_numpy(truncated)
+        states = states.get_as_tensors("cpu")
+        next_states = next_states.get_as_tensors("cpu")
+        return states, actions, rewards, dones, truncated, next_states
+
+    def _pad_experiecne(self, states, actions, rewards, dones, truncateds, next_states):
+        """
+        Creates a padded version of the data
+        Args:
+            states: The states
+            actions: The actions
+            rewards: The rewards
+            dones: The dones
+            truncateds: The truncateds
+
+        Returns:
+            The padded states, actions, rewards, dones, truncateds, loss_flag, and lengths
+        """
+        padded_states, lengths = pad_states_from_done_indices(states, dones)
+        padded_actions, lengths = pad_tensors_from_done_indices(actions, dones)
+        padded_rewards, lengths = pad_tensors_from_done_indices(rewards, dones)
+        padded_dones, lengths = pad_tensors_from_done_indices(dones, dones)
+        padded_truncateds, lengths = pad_tensors_from_done_indices(truncateds, dones)
+        padded_next_states, lengths = pad_states_from_done_indices(next_states, dones)
+        loss_flag, lengths = pad_tensors_from_done_indices(
+            torch.ones_like(rewards), dones
+        )
+        return (
+            padded_states,
+            padded_actions,
+            padded_rewards,
+            padded_dones,
+            padded_truncateds,
+            padded_next_states,
+            loss_flag,
+            lengths,
+        )
+
+    def __getitem__(self, idx):
+        return (
+            self.states[idx],
+            self.actions[idx],
+            self.rewards[idx],
+            self.dones[idx],
+            self.truncated[idx],
+            self.next_states[idx],
+            self.loss_flag[idx],
+        )
+
+    def collate_fn(self, batch):
+        states, actions, rewards, dones, truncated, next_states, loss_flag = zip(*batch)
+        states = ObsWrapper.stack(states)
+        actions = torch.stack(actions)
+        rewards = torch.stack(rewards)
+        dones = torch.stack(dones)
+        truncated = torch.stack(truncated)
+        next_states = ObsWrapper.stack(next_states)
+        loss_flag = torch.stack(loss_flag)
+        return states, actions, rewards, dones, truncated, next_states, loss_flag
+
+
+class IData(ABC):
+    @abstractmethod
+    def get_data_loader(self, batch_size: int, shuffle: bool):
+        raise NotImplementedError
+
+
+class RLData(IData):
+    def __init__(
+        self,
+        states,
+        actions,
+        rewards,
+        dones,
+        truncated,
+        next_states,
+        prepare_for_rnn,
+        num_workers: int = 2,
+    ):
+        self.num_workers = num_workers
+        self.prepare_for_rnn = prepare_for_rnn
+        self.dataset = RLDataset(
+            states, actions, rewards, dones, truncated, next_states, prepare_for_rnn
+        )
+        self.can_shuffle = False if self.prepare_for_rnn else True
+
+    def get_data_loader(self, batch_size, shuffle):
+        if not (shuffle == self.can_shuffle or shuffle == False):
+            logging.warning(
+                "Shuffle is not allowed when preparing data for RNN, changing shuffle to False"
+            )
+            shuffle = False
+
+        return DataLoader(
+            self.dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=self.num_workers,
+            pin_memory=True,
+            drop_last=False,
+            collate_fn=self.dataset.collate_fn,
+        )
 
 
 class RL_Agent(ABC):
@@ -55,7 +265,7 @@ class RL_Agent(ABC):
             max_mem_size (int, optional): maximum size of the experience replay buffer. Defaults to 10e6.
             batch_size (int, optional): batch size for training. Defaults to 256.
             explorer (Explorer, optional): exploration method. Defaults to RandomExplorer().
-            num_parallel_envs (int, optional): number of parallel environments. Defaults to 4.
+            num_parallel_envs (int): number of parallel environments. Defaults to 4.
             num_epochs_per_update (int): Training epochs per update. Defaults to 10.
             lr (float, optional): learning rate. Defaults to 0.0001.
             device (torch.device, optional): device to run on. Defaults to None.
@@ -84,20 +294,35 @@ class RL_Agent(ABC):
         self.obs_shape = ObsShapeWraper(obs_space)  # obs_shape
         self.discount_factor = discount_factor
         self.batch_size = batch_size
-        self.num_parallel_envs = (
-            batch_size if num_parallel_envs is None else num_parallel_envs
-        )
-
+        self.set_num_parallel_env(num_parallel_envs)
         self.device = (
             device if device is not None else utils.init_torch()
         )  # default goes to cuda -> cpu' or enter manualy
 
         self.lr = lr
         self.define_action_space(action_space)
-        self.setup_models()
+        models = self.setup_models()
+        self.validate_models(models)
         self.experience = experience_class(max_mem_size, self.obs_shape, self.n_actions)
 
         self.metrics = TrainMetrics()
+
+    def contains_reccurent_nn(self):
+        return self.rnn_models
+
+    def validate_models(self, models):
+        self.rnn_models = False
+        assert (
+            models is not None
+        ), "setup_models should return a list of models, or empty list"
+        is_rnn_list = []
+        for m in models:
+            is_rnn_list.append(m.is_rnn)
+        if len(is_rnn_list) > 0:
+            assert (
+                np.array(is_rnn_list) == is_rnn_list[0]
+            ).all(), "all models should have the same rnn status - either all reccurent, or either all not reccurent"
+            self.rnn_models = is_rnn_list[0]
 
     def init_tb_writer(self, tensorboard_dir: str = None):
         """
@@ -130,14 +355,14 @@ class RL_Agent(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def setup_models(self):
+    def setup_models(self) -> list[torch.nn.Module]:
         """
         Initializes the NN models
         """
         raise NotImplementedError
 
     @abstractmethod
-    def update_policy(self, *exp):
+    def update_policy(self, trajectories_dataset):
         """
         Updates the models and according to the agnets logic
         """
@@ -262,7 +487,6 @@ class RL_Agent(ABC):
         self.obs_shape = checkpoint["obs_shape"]
         self.discount_factor = checkpoint["discount_factor"]
         self.define_action_space(self.action_space)
-
         self.setup_models()
         return checkpoint
 
@@ -394,7 +618,8 @@ class RL_Agent(ABC):
             i += collect_info[to_update_idx]
             ep_number += self.num_parallel_envs
             self.set_train_mode()
-            self.update_policy()
+            trajectory_data = self.get_trajectories_data()
+            self.update_policy(trajectory_data)
             self.metrics.on_epoch_end()
 
             for k in self.metrics:
@@ -409,6 +634,13 @@ class RL_Agent(ABC):
         self.close_env_procs()
         return pd.DataFrame(train_stats, index=range(len(train_stats["rewards"])))
 
+    @abstractmethod
+    def get_trajectories_data(self):
+        """
+        Returns the trajectories data
+        """
+        raise NotImplementedError
+
     def set_num_parallel_env(self, num_parallel_envs):
         """
         Sets the number of parallel environments
@@ -416,6 +648,7 @@ class RL_Agent(ABC):
         Args:
             num_parallel_envs (int): number of parallel environments
         """
+        self.num_parallel_envs = num_parallel_envs
         assert (
             self.num_parallel_envs <= self.batch_size
         ), f"please provide batch_size>= num_parallel_envs current: {self.batch_size}, {num_parallel_envs},"
@@ -609,7 +842,6 @@ class RL_Agent(ABC):
             # TODO DEBUG
             # allways use all envs to step, even some envs are done already
             next_obs, reward, terminated, trunc, info = self.env.step(current_actions)
-
             for i in relevant_indices:
                 actions[i].append(current_actions[i])
                 intrisic_reward = self.intrisic_reward_func(
@@ -720,47 +952,3 @@ class RL_Agent(ABC):
             "std": all_rewards.std(),
             "all_runs": all_rewards,
         }
-
-    def get_seqs_indices_for_pack(self, done_indices):
-        """
-        calculates the sequence indices for packing the data
-        returns seq_lens, sorted_data_sub_indices
-        """
-        env_indices = np.zeros_like(done_indices, dtype=np.int32)
-        env_indices[0] = -1
-        env_indices[1:] = done_indices[:-1]
-        all_lens = done_indices - env_indices
-        seq_indices = np.argsort(all_lens, kind="stable")[::-1]
-        seq_lens = all_lens[seq_indices]
-        return seq_lens, seq_indices  # , sorted_data_sub_indices
-
-    def pad_from_done_indices(self, data, dones):
-        """
-        Packs the data from the done indices to torch.nn.utils.rnn.PackedSequence
-
-        """
-        done_indices = torch.where(dones == True)[0].cpu().numpy().astype(np.int32)
-        sorted_seq_lens, seq_indices = self.get_seqs_indices_for_pack(
-            done_indices
-        )  # sorted_data_sub_indices
-        rev_indices = seq_indices.argsort()
-        assert np.all(np.sort(sorted_seq_lens, kind="stable")[::-1] == sorted_seq_lens)
-        b = done_indices
-        max_colected_len = np.max(sorted_seq_lens)
-        breakpoint()
-        padded_obs = ObsWrapper(tensors=True)
-        for k in data:
-            obs_shape = data[k][-1].shape
-            temp = []
-            curr_idx = 0
-            for i, d_i in enumerate(done_indices):
-                temp.append(data[k][curr_idx : d_i + 1])
-                curr_idx = d_i + 1  #
-
-            temp = [temp[i] for i in seq_indices]
-            max_new_seq_len = max_colected_len
-            new_lens = sorted_seq_lens
-
-            padded_seq_batch = torch.nn.utils.rnn.pad_sequence(temp, batch_first=True)
-            padded_obs[k] = padded_seq_batch
-        return padded_obs, rev_indices

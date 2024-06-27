@@ -45,7 +45,7 @@ class Heuristic_Agent(RL_Agent):
         """
         Does nothing in this agent.
         """
-        pass
+        return []
 
     def get_models_input_output_shape(obs_space, action_space):
         """

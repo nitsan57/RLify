@@ -40,6 +40,7 @@ class DQN_Agent(VDQN_Agent):
         super().setup_models()
         self.target_Q_model = copy.deepcopy(self.Q_model).to(self.device)
         DQN_Agent.hard_target_update(self, manual_update=True)
+        return [self.Q_model, self.target_Q_model]
 
     @staticmethod
     def get_models_input_output_shape(obs_space, action_space):
@@ -135,12 +136,9 @@ class DQN_Agent(VDQN_Agent):
         Updates the policy.
         Using the DQN algorithm.
         """
-        if len(exp) == 0:
-            states, actions, rewards, dones, truncated, next_states, returns = (
-                self._get_dqn_experiences()
-            )
-        else:
-            states, actions, rewards, dones, truncated, next_states, returns = exp
+
+        states, actions, rewards, dones, truncated, next_states, returns = exp
+
         for g in range(self.num_epochs_per_update):
             terminated = dones * (1 - truncated)
             all_samples_len = len(states)
@@ -155,7 +153,6 @@ class DQN_Agent(VDQN_Agent):
                 batched_dones = dones[b : b + b_size]
                 batched_terminated = terminated[b : b + b_size]
                 batched_returns = returns[b : b + b_size]
-
                 v_table = self.Q_model(batched_states, batched_dones)
 
                 # only because last batch is smaller
