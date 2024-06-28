@@ -16,7 +16,6 @@ def calc_gaes(rewards, values, terminated, discount_factor=0.99, decay=0.9):
     Paper: https://arxiv.org/pdf/1506.02438.pdf
     """
     next_values = np.concatenate([values[1:], np.zeros(1)])
-
     td = rewards + discount_factor * (next_values) * (1 - terminated)
     deltas = td - values
 
