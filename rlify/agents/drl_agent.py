@@ -76,13 +76,37 @@ def pad_tensors_from_done_indices(data, dones):
     return padded_obs, lengths
 
 
+class IData(ABC):
+    def __init__(self, dataset: Dataset, prepare_for_rnn, num_workers: int= 0):
+        self.dataset = dataset
+        self.prepare_for_rnn = prepare_for_rnn
+        self.num_workers = num_workers
+        self.can_shuffle = False if self.prepare_for_rnn else True
+
+    def get_dataloader(self, batch_size, shuffle):
+        if not (shuffle == self.can_shuffle or shuffle == False):
+            logging.warning(
+                "Shuffle is not allowed when preparing data for RNN, changing shuffle to False"
+            )
+            shuffle = False
+
+        return DataLoader(
+            self.dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=self.num_workers,
+            pin_memory=True,
+            drop_last=False,
+            collate_fn=self.dataset.collate_fn,
+        )
+
 class LambdaDataset(Dataset):
     def __init__(
         self,
-        obsWrapper_obs_collection: ObsWrapper,
-        tensor_collection: torch.tensor,
-        dones,
-        prepare_for_rnn,
+        obsWrapper_obs_collection: tuple[ObsWrapper],
+        tensor_collection: tuple[torch.tensor],
+        dones: torch.tensor,
+        prepare_for_rnn: bool,
     ):
         obsWrapper_obs_collection, tensor_collection, dones = self._prepare_data(
             obsWrapper_obs_collection, tensor_collection, dones
@@ -134,8 +158,8 @@ class LambdaDataset(Dataset):
             torch.ones_like(dones), dones
         )
         return (
-            *obsWrapper_obs_collection,
-            *tensor_collection,
+            obsWrapper_obs_collection,
+            tensor_collection,
             loss_flag,
             lengths,
         )
@@ -146,8 +170,8 @@ class LambdaDataset(Dataset):
         )
         tensor_collection = tuple(tensor[idx] for tensor in self.tensor_collection)
         return (
-            *obsWrapper_obs_collection,
-            *tensor_collection,
+            obsWrapper_obs_collection,
+            tensor_collection,
             self.dones[idx],
             self.loss_flag[idx],
         )
@@ -157,6 +181,20 @@ class LambdaDataset(Dataset):
 
     def collate_fn(self, batch):
         return batch
+
+class LambdaData(IData):
+    def __init__(
+        self,
+        obsWrapper_obs_collection: tuple[ObsWrapper],
+        tensor_collection: tuple[torch.tensor],
+        dones: torch.tensor,
+        prepare_for_rnn: bool,
+        num_workers: int= 0,
+    ) -> None:
+        dataset = LambdaDataset(
+            obsWrapper_obs_collection, tensor_collection, dones, prepare_for_rnn
+        )
+        super().__init__(dataset, prepare_for_rnn, num_workers)
 
 
 class RLDataset(Dataset):
@@ -199,13 +237,6 @@ class RLDataset(Dataset):
     def collate_fn(self, batch):
         return batch
 
-
-class IData(ABC):
-    
-    def get_data_loader(self, batch_size: int, shuffle: bool):
-        raise NotImplementedError
-
-
 class RLData(IData):
     def __init__(
         self,
@@ -218,30 +249,11 @@ class RLData(IData):
         prepare_for_rnn,
         num_workers: int = 0,
     ):
-        self.num_workers = num_workers
-        self.prepare_for_rnn = prepare_for_rnn
-        self.dataset = RLDataset(
+        
+        dataset = RLDataset(
             states, actions, rewards, dones, truncated, next_states, prepare_for_rnn
         )
-        self.can_shuffle = False if self.prepare_for_rnn else True
-
-    def get_data_loader(self, batch_size, shuffle):
-        if not (shuffle == self.can_shuffle or shuffle == False):
-            logging.warning(
-                "Shuffle is not allowed when preparing data for RNN, changing shuffle to False"
-            )
-            shuffle = False
-
-        return DataLoader(
-            self.dataset,
-            batch_size=batch_size,
-            shuffle=shuffle,
-            num_workers=self.num_workers,
-            pin_memory=True,
-            drop_last=False,
-            collate_fn=self.dataset.collate_fn,
-        )
-
+        super().__init__(dataset, prepare_for_rnn, num_workers)
 
 class RL_Agent(ABC):
     """

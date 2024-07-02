@@ -219,7 +219,7 @@ class VDQN_Agent(RL_Agent):
         # returns = calc_returns(rewards, (dones * (1 - truncated)), self.discount_factor)
         # ds = dataset(states, actions, rewards, dones, truncated, next_states)
         shuffle = False if (self.policy_nn.is_rnn) else True
-        dataloader = trajectory_data.get_data_loader(self.batch_size, shuffle=shuffle)
+        dataloader = trajectory_data.get_dataloader(self.batch_size, shuffle=shuffle)
         for g in range(num_grad_updates):
             # terminated = dones * (1 - truncated)
             # not_terminated = 1 - terminated

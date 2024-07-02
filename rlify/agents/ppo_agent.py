@@ -9,8 +9,9 @@ from rlify.agents.experience_replay import ForgettingExperienceReplay
 from .action_spaces_utils import MCAW, MDA
 from .explorers import Explorer, RandomExplorer
 from .drl_agent import (
-    RL_Agent,
     IData,
+    LambdaData,
+    RL_Agent,
     RLData,
     RLDataset,
     LambdaDataset,
@@ -20,141 +21,6 @@ import adabelief_pytorch
 from rlify.utils import HiddenPrints
 import gc
 from torch.utils.data import Dataset, DataLoader
-
-
-# class PPODataset(Dataset):
-#     def __init__(
-#         self,
-#         rl_dataset: RLDataset,
-#         values,
-#         returns,
-#         advantages,
-#         logits,
-#     ):
-#         self.rl_dataset = rl_dataset
-#         values, returns, advantages, logits = self._prepare_values_logits(
-#             values, returns, advantages, logits
-#         )
-#         self.values = values
-#         self.returns = returns
-#         self.advantages = advantages
-#         self.logits = logits
-#         if self.rl_dataset.prepare_for_rnn:
-#             (
-#                 self.values,
-#                 self.returns,
-#                 self.logits,
-#                 self.advantages,
-#                 lengths,
-#             ) = self._pad_values_logits(
-#                 values, returns, advantages, logits, self.rl_dataset.dones
-#             )
-
-#     def __len__(self):
-#         return self.rl_dataset.__len__()
-
-#     def _prepare_values_logits(self, values, returns, advantages, logits):
-#         """
-#         Prepares the data for training
-#         Args:
-#             states: The states
-#             actions: The actions
-#             rewards: The rewards
-#             dones: The dones
-#             truncated: The truncateds
-
-#         Returns:
-#             The prepared data
-#         """
-#         values = torch.from_numpy(values)
-#         returns = torch.from_numpy(returns)
-#         advantages = torch.from_numpy(advantages)
-#         logits = torch.from_numpy(logits)
-#         return values, returns, advantages, logits
-
-#     def _pad_values_logits(self, values, returns, advantages, logits, dones):
-#         """
-#         Creates a padded version of the data
-#         Args:
-#             values: The values
-#             logits: The logits
-
-#         Returns:
-#             The padded values and logits, and lengths
-#         """
-#         padded_values, lengths = pad_tensors_from_done_indices(values, dones)
-#         padded_returns, lengths = pad_tensors_from_done_indices(returns, dones)
-#         padded_advantages = pad_tensors_from_done_indices(advantages, dones)
-#         padded_logits, lengths = pad_tensors_from_done_indices(logits, dones)
-#         return (
-#             padded_values,
-#             padded_advantages,
-#             padded_returns,
-#             padded_logits,
-#             lengths,
-#         )
-
-#     def __getitems__(self, idx):
-#         """
-#         Gets the item at the index
-#         Args:
-#             idx: item idx
-
-#         Returns:
-#             batched version of the data at idx
-#             states, actions, rewards, dones, truncated, next_states, loss_flag
-
-#         """
-#         states, actions, rewards, dones, truncated, next_states, loss_flag = (
-#             self.rl_dataset.__getitems__(idx)
-#         )
-#         returns = self.returns[idx]
-#         values = self.values[idx]
-#         advantages = self.advantages[idx]
-#         logits = self.logits[idx]
-#         return (
-#             states,
-#             actions,
-#             rewards,
-#             dones,
-#             truncated,
-#             next_states,
-#             loss_flag,
-#             values,
-#             returns,
-#             advantages,
-#             logits,
-#         )
-
-#     def __getitem__(self, idx):
-#         """
-#         Gets the item at the index
-#         Args:
-#             idx: item idx
-
-#         Returns:
-#             batched version of the data at idx
-#             states, actions, rewards, dones, truncated, next_states, loss_flag
-
-#         """
-#         return self.__getitems__(idx)
-
-#     def collate_fn(self, batch):
-#         (
-#             states,
-#             actions,
-#             rewards,
-#             dones,
-#             truncated,
-#             next_states,
-#             loss_flag,
-#             values,
-#             returns,
-#             advantages,
-#             logits,
-#         ) = batch
-#         return (states, actions, dones, returns, advantages, logits, loss_flag)
-
 
 class PPODataset(Dataset):
     def __init__(
@@ -214,33 +80,13 @@ class PPOData(IData):
         advantages,
         logits,
         prepare_for_rnn,
-        num_workers: int = 2,
+        num_workers: int= 0,
     ):
-        self.num_workers = num_workers
-        self.prepare_for_rnn = prepare_for_rnn
-        self.dataset = PPODataset(
+        dataset = PPODataset(
             states, actions, dones, returns, advantages, logits, prepare_for_rnn
         )
-        self.can_shuffle = False if self.prepare_for_rnn else True
-
-    def get_data_loader(self, batch_size, shuffle=True):
-        if not (shuffle == self.can_shuffle or shuffle == False):
-            logging.warning(
-                "Shuffle is not allowed when preparing data for RNN, changing shuffle to False"
-            )
-            shuffle = False
-
-        return DataLoader(
-            self.dataset,
-            batch_size=batch_size,
-            shuffle=shuffle,
-            num_workers=self.num_workers,
-            pin_memory=True,
-            drop_last=False,
-            collate_fn=self.dataset.collate_fn,
-        )
-
-
+        super().__init__(dataset, prepare_for_rnn, num_workers)
+        
 class PPO_Agent(RL_Agent):
     """Proximal Policy Optimization (PPO) reinforcement learning agent.
     Inherits from RL_Agent.
@@ -442,22 +288,12 @@ class PPO_Agent(RL_Agent):
     def get_trajectories_data(self):
         return self._get_ppo_experiences()
 
-    def calc_logits_values(self, states, actions, dones):
-        ds = LambdaDataset(
-            obsWrapper_obs_collection=(states,),
+    def calc_logits_values(self, states, actions, dones):  
+        data = LambdaData(obsWrapper_obs_collection=(states,),
             tensor_collection=(actions,),
             dones=dones,
-            prepare_for_rnn=self.contains_reccurent_nn(),
-        )
-        dl = DataLoader(
-            ds,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=2,
-            pin_memory=True,
-            drop_last=False,
-            collate_fn=ds.collate_fn,
-        )
+            prepare_for_rnn=self.contains_reccurent_nn(),)
+        dl = data.get_dataloader(self.batch_size, shuffle=False)
 
         values = []
         logits = []
@@ -465,11 +301,13 @@ class PPO_Agent(RL_Agent):
         with torch.no_grad():
             for mb in dl:
                 (
-                    batched_states,
-                    batched_actions,
+                    obsWrapper_obs_collection,
+                    tensor_collection,
                     batched_dones,
                     batched_loss_flags,
                 ) = mb
+                batched_states = obsWrapper_obs_collection[0]
+                batched_actions = tensor_collection[0]
                 batched_actions = batched_actions.to(self.device, non_blocking=True)
                 batched_states = batched_states.to(self.device)
                 values.append(
@@ -481,46 +319,8 @@ class PPO_Agent(RL_Agent):
                     batched_states, batched_dones.to(self.device)
                 ).log_prob(batched_actions)
                 logits.append(logit.to("cpu"))
-        return torch.cat(logits), torch.cat(values)
+        return torch.cat(logits).detach().cpu().numpy(), torch.cat(values).detach().cpu().numpy()
 
-    # def ppo_minibatch_generator(
-    #     self, states, actions, rewards, dones, truncated, next_states, logits, values
-    # ):
-
-    #     terminated = dones * (1 - truncated)
-    #     advantages, returns = calc_gaes(
-    #         rewards, values, terminated, self.discount_factor
-    #     )
-    #     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-10)
-    #     returns = returns.unsqueeze(-1)
-    #     if False:
-    #         padded_states, trajectories_lengths = self.pad_from_done_indices(
-    #             states, dones
-    #         )
-    #         # write a code piece
-    #         # run a for loop that goes through the padded states and calculates the values and logits
-    #         num_sequences_per_batch = self.batch_size // len(padded_states)
-    #         # )  # Arrange a list that determines the sequence count for each mini batch
-    #         max_len = trajectories_lengths.max()
-    #         for i in range(0, max_len, num_sequences_per_batch):
-    #             batch_states = padded_states[:, i : i + num_sequences_per_batch]
-    #             breakpoint()
-    #             values.append(
-    #                 self.critic_nn(batch_states.to(self.device), dones).squeeze()
-    #             )
-    #             dist = self.actor_model(batch_states, dones).log_prob(
-    #                 actions[i : i + num_sequences_per_batch]
-    #             )
-    #             logits.append(dist.log_prob(actions[i : i + num_sequences_per_batch]))
-    #     else:
-    #         mb_gen = self.minibatch_generator(
-    #             [states, actions, rewards, dones, truncated, next_states],
-    #             trajectories_lengths.shape[1],
-    #         )
-    #         # for mb in mb_gen:
-    #         #     batch_states, batched_actions, batched_dones, batched_rewards, batched_dones, batched_truncated, batch_next_states = mb
-    #         #     batched_logits, batched_values = self.calc_logits_values(batch_states, batched_actions, batched_dones)
-    #         #     yield batch_states, batched_actions, batched_dones, value, logit
 
     def _get_ppo_experiences(self, num_episodes=None):
         """
@@ -538,8 +338,6 @@ class PPO_Agent(RL_Agent):
                 self.experience.get_last_episodes(num_episodes)
             )
         logits, values = self.calc_logits_values(states, actions, dones)
-        values = values.detach().cpu().numpy()
-        logits = logits.detach().cpu().numpy()
         advantages, returns = calc_gaes(
             rewards,
             values,
@@ -555,126 +353,10 @@ class PPO_Agent(RL_Agent):
             returns,
             advantages,
             logits,
+            self.contains_reccurent_nn()
         )
         return trajectory_data
 
-        # (
-        #     states,
-        #     actions,
-        #     rewards,
-        #     dones,
-        #     truncated,
-        #     next_states,
-        #     loss_flag,
-        #     trajectories_lengths,
-        # ) = self.experience.get_last_episodes(num_episodes, padded=True)
-        # if self.contains_reccurent_nn():
-        #     (
-        #         states,
-        #         actions,
-        #         rewards,
-        #         dones,
-        #         truncated,
-        #         next_states,
-        #         loss_flag,
-        #         trajectories_lengths,
-        #     ) = self.experience.get_last_episodes(num_episodes, padded=True)
-
-        # else:
-        #     (
-        #         states,
-        #         actions,
-        #         rewards,
-        #         dones,
-        #         truncated,
-        #         next_states,
-        #     ) = self.experience.get_last_episodes(num_episodes, padded=False)
-
-        # can go inside expericnce buffer
-        #############
-        # gen = self.minibatch_generator(
-        #     [states, actions, rewards, dones, truncated, next_states],
-        #     trajectories_lengths.shape[1],
-        # # )
-        # breakpoint()
-
-        # breakpoint()
-        # #     terminated = dones * (1 - truncated)
-        # #     advantages, returns = calc_gaes(
-        # #         rewards, values, terminated, self.discount_factor
-        # #     )
-        # #     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-10)
-        # #     returns = returns.unsqueeze(-1)
-        # # logits, values = self.calc_logits_values(states, actions, dones)
-
-        # # mini_batch_generator = self.mini_batch_generator([states, actions, rewards, dones, truncated])
-        # # for mini_batch in mini_batch_generator:
-        # #     states, actions, rewards, dones, truncated = mini_batch
-
-        # prev_i = 0
-        # values = []
-        # logits = []
-        # # self.set_eval_mode()
-        # # with torch.no_grad():
-        # if False:
-        #     padded_states, trajectories_lengths = self.pad_from_done_indices(
-        #         states, dones
-        #     )
-        #     # write a code piece
-        #     # run a for loop that goes through the padded states and calculates the values and logits
-        #     num_sequences_per_batch = self.batch_size // len(padded_states)
-        #     # )  # Arrange a list that determines the sequence count for each mini batch
-        #     max_len = trajectories_lengths.max()
-        #     for i in range(0, max_len, num_sequences_per_batch):
-        #         batch_states = padded_states[:, i : i + num_sequences_per_batch]
-        #         breakpoint()
-        #         values.append(
-        #             self.critic_nn(batch_states.to(self.device), dones).squeeze()
-        #         )
-        #         dist = self.actor_model(batch_states, dones).log_prob(
-        #             actions[i : i + num_sequences_per_batch]
-        #         )
-        #         logits.append(dist.log_prob(actions[i : i + num_sequences_per_batch]))
-        # else:
-
-        #     def gen():
-        #         self.set_eval_mode()
-        #         with torch.no_grad():
-        #             for b in range(0, len(states), self.batch_size):
-        #                 batch_states = states[b : b + self.batch_size].to(self.device)
-        #                 batched_actions = actions[b : b + self.batch_size].to(
-        #                     self.device
-        #                 )
-        #                 batched_dones = dones[b : b + self.batch_size].to(self.device)
-        #                 # values.append(
-        #                 #     self.critic_nn(batch_states, batched_dones).squeeze().to("cpu")
-        #                 # )
-        #                 logit = self.actor_model(batch_states, batched_dones).log_prob(
-        #                     batched_actions
-        #                 )
-        #                 # logits.append(logit.flatten().to("cpu"))
-        #                 yield batch_states, batched_actions, batched_dones, self.critic_nn(
-        #                     batch_states, batched_dones
-        #                 ).squeeze(), logit.flatten()
-
-        # return gen
-        # breakpoint()
-
-        # # self.set_eval_mode()
-        # # with torch.no_grad():
-        # #     values = self.critic_nn(states, dones).squeeze()
-        # #     dist = self.actor_model(states, dones)
-        # # self.set_train_mode()
-        # # logits = dist.log_prob(actions)
-        # return (
-        #     states,
-        #     actions,
-        #     rewards,
-        #     dones,
-        #     truncated,
-        #     torch.cat(values),
-        #     torch.cat(logits),
-        # )
 
     def update_policy(self, trajectory_data: PPOData):
         """
@@ -683,7 +365,7 @@ class PPO_Agent(RL_Agent):
         """
 
         shuffle = False if (self.policy_nn.is_rnn) else True
-        ppo_dataloader = trajectory_data.get_data_loader(
+        ppo_dataloader = trajectory_data.get_dataloader(
             self.batch_size, shuffle=shuffle
         )
         for e in range(self.num_epochs_per_update):
