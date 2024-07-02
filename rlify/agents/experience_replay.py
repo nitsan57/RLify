@@ -424,7 +424,9 @@ class ForgettingExperienceReplay(ExperienceReplay):
         self.num_episodes_added = sum(dones)
         curr_obs = ObsWrapper(curr_obs)
         self.all_buffers[self.states_index] = curr_obs
-        self.all_buffers[self.actions_index] = np.array(actions).astype(np.float32)
+        self.all_buffers[self.actions_index] = np.array(actions).reshape(
+            -1, self.n_actions
+        )  # np.array(actions).astype(np.float32)
         self.all_buffers[self.reward_index] = np.array(rewards).astype(np.float32)
         self.all_buffers[self.dones_index] = np.array(dones).astype(np.float32)
         self.all_buffers[self.truncated_index] = np.array(truncateds).astype(np.float32)

@@ -19,6 +19,7 @@ from munch import Munch
 import os
 import pygame
 
+
 logger = logging.getLogger(__name__)
 import datetime
 
@@ -75,122 +76,132 @@ def pad_tensors_from_done_indices(data, dones):
     return padded_obs, lengths
 
 
-class RLDataset(Dataset):
+class LambdaDataset(Dataset):
     def __init__(
-        self, states, actions, rewards, dones, truncated, next_states, prepare_for_rnn
+        self,
+        obsWrapper_obs_collection: ObsWrapper,
+        tensor_collection: torch.tensor,
+        dones,
+        prepare_for_rnn,
     ):
-        states, actions, rewards, dones, truncated, next_states = self._prepare_data(
-            states, actions, rewards, dones, truncated, next_states
+        obsWrapper_obs_collection, tensor_collection, dones = self._prepare_data(
+            obsWrapper_obs_collection, tensor_collection, dones
         )
-        self.states = states
-        self.actions = actions
-        self.rewards = rewards
+        self.obsWrapper_obs_collection = obsWrapper_obs_collection
+        self.tensor_collection = tensor_collection
         self.dones = dones
-        self.truncated = truncated
-        self.next_states = next_states
-        self.terminated = dones * (1 - truncated)
-        self.loss_flag = torch.ones_like(rewards)
+        self.loss_flag = torch.ones_like(dones)
         self.prepare_for_rnn = prepare_for_rnn
-        self.max_len = len(states)
+        self.max_len = len(dones)
         if self.prepare_for_rnn:
             (
-                self.states,
-                self.actions,
-                self.rewards,
-                self.dones,
-                self.truncated,
-                self.next_states,
+                self.obsWrapper_obs_collection,
+                self.tensor_collection,
                 self.loss_flag,
                 lengths,
             ) = self._pad_experiecne(
-                states, actions, rewards, dones, truncated, next_states
+                self.obsWrapper_obs_collection, self.tensor_collection, dones
             )
             self.max_len = lengths.max()
 
     def __len__(self):
         return self.max_len
 
-    def _prepare_data(self, states, actions, rewards, dones, truncated, next_states):
-        """
-        Prepares the data for training
-        Args:
-            states: The states
-            actions: The actions
-            rewards: The rewards
-            dones: The dones
-            truncated: The truncateds
+    def _prepare_data(self, obsWrapper_obs_collection, tensor_collection, dones):
 
-        Returns:
-            The prepared data
-        """
-        actions = torch.from_numpy(actions)
-        if len(actions.shape) == 1:
-            actions = actions.unsqueeze(-1)
-        rewards = torch.from_numpy(rewards)
+        obsWrapper_obs_collection = tuple(
+            obs.get_as_tensors("cpu") for obs in obsWrapper_obs_collection
+        )
+        tensor_collection = tuple(
+            torch.from_numpy(tensor) for tensor in tensor_collection
+        )
         dones = torch.from_numpy(dones)
-        truncated = torch.from_numpy(truncated)
-        states = states.get_as_tensors("cpu")
-        next_states = next_states.get_as_tensors("cpu")
-        return states, actions, rewards, dones, truncated, next_states
+        return obsWrapper_obs_collection, tensor_collection, dones
 
-    def _pad_experiecne(self, states, actions, rewards, dones, truncateds, next_states):
-        """
-        Creates a padded version of the data
-        Args:
-            states: The states
-            actions: The actions
-            rewards: The rewards
-            dones: The dones
-            truncateds: The truncateds
-
-        Returns:
-            The padded states, actions, rewards, dones, truncateds, loss_flag, and lengths
-        """
-        padded_states, lengths = pad_states_from_done_indices(states, dones)
-        padded_actions, lengths = pad_tensors_from_done_indices(actions, dones)
-        padded_rewards, lengths = pad_tensors_from_done_indices(rewards, dones)
-        padded_dones, lengths = pad_tensors_from_done_indices(dones, dones)
-        padded_truncateds, lengths = pad_tensors_from_done_indices(truncateds, dones)
-        padded_next_states, lengths = pad_states_from_done_indices(next_states, dones)
+    def _pad_experiecne(self, obsWrapper_obs_collection, tensor_collection, dones):
+        """ """
+        obsWrapper_obs_collection = (
+            pad_states_from_done_indices(obs, dones)[0]
+            for obs in obsWrapper_obs_collection
+        )
+        tensor_collection = (
+            pad_tensors_from_done_indices(tensor, dones)[0]
+            for tensor in tensor_collection
+        )
+        dones, lengths = pad_from_done_indices(dones, dones)
+        tensor_collection = (torch.from_numpy(tensor) for tensor in tensor_collection)
         loss_flag, lengths = pad_tensors_from_done_indices(
-            torch.ones_like(rewards), dones
+            torch.ones_like(dones), dones
         )
         return (
-            padded_states,
-            padded_actions,
-            padded_rewards,
-            padded_dones,
-            padded_truncateds,
-            padded_next_states,
+            *obsWrapper_obs_collection,
+            *tensor_collection,
             loss_flag,
             lengths,
         )
 
-    def __getitem__(self, idx):
+    def __getitems__(self, idx):
+        obsWrapper_obs_collection = tuple(
+            obs[idx] for obs in self.obsWrapper_obs_collection
+        )
+        tensor_collection = tuple(tensor[idx] for tensor in self.tensor_collection)
         return (
-            self.states[idx],
-            self.actions[idx],
-            self.rewards[idx],
+            *obsWrapper_obs_collection,
+            *tensor_collection,
             self.dones[idx],
-            self.truncated[idx],
-            self.next_states[idx],
             self.loss_flag[idx],
         )
 
+    def __getitem__(self, idx):
+        return self.__getitems__(idx)
+
     def collate_fn(self, batch):
-        states, actions, rewards, dones, truncated, next_states, loss_flag = zip(*batch)
-        states = ObsWrapper.stack(states)
-        actions = torch.stack(actions)
-        rewards = torch.stack(rewards)
-        dones = torch.stack(dones)
-        truncated = torch.stack(truncated)
-        next_states = ObsWrapper.stack(next_states)
-        loss_flag = torch.stack(loss_flag)
-        return states, actions, rewards, dones, truncated, next_states, loss_flag
+        return batch
+
+
+class RLDataset(Dataset):
+    def __init__(
+        self, states, actions, rewards, dones, truncated, next_states, prepare_for_rnn
+    ):
+        obs_collection = states, next_states
+        tensor_collection = actions, rewards, truncated
+
+        self.x_dataset = LambdaDataset(
+            obs_collection,
+            tensor_collection=tensor_collection,
+            dones=dones,
+            prepare_for_rnn=prepare_for_rnn,
+        )
+        self.prepare_for_rnn = prepare_for_rnn
+
+    def __len__(self):
+        return len(self.x_dataset)
+
+    def __getitems__(self, idx):
+        obsWrapper_obs_collection, tensor_collection, dones, loss_flag = (
+            self.x_dataset.__getitems__(idx)
+        )
+        states, next_states = obsWrapper_obs_collection
+        actions, rewards, truncated = tensor_collection
+        return (
+            states,
+            actions,
+            rewards,
+            dones,
+            truncated,
+            next_states,
+            loss_flag,
+        )
+
+    def __getitem__(self, idx):
+        return self.__getitems__(idx)
+
+    def collate_fn(self, batch):
+        return batch
 
 
 class IData(ABC):
-    @abstractmethod
+    
     def get_data_loader(self, batch_size: int, shuffle: bool):
         raise NotImplementedError
 
@@ -205,7 +216,7 @@ class RLData(IData):
         truncated,
         next_states,
         prepare_for_rnn,
-        num_workers: int = 2,
+        num_workers: int = 0,
     ):
         self.num_workers = num_workers
         self.prepare_for_rnn = prepare_for_rnn

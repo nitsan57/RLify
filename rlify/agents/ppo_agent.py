@@ -3,187 +3,225 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+from torch.utils.data.dataset import ConcatDataset
 from .agent_utils import ObsWrapper, calc_gaes
 from rlify.agents.experience_replay import ForgettingExperienceReplay
 from .action_spaces_utils import MCAW, MDA
 from .explorers import Explorer, RandomExplorer
-from .drl_agent import RL_Agent, IData, RLData, RLDataset, pad_tensors_from_done_indices
+from .drl_agent import (
+    RL_Agent,
+    IData,
+    RLData,
+    RLDataset,
+    LambdaDataset,
+    pad_tensors_from_done_indices,
+)
 import adabelief_pytorch
 from rlify.utils import HiddenPrints
 import gc
 from torch.utils.data import Dataset, DataLoader
 
 
+# class PPODataset(Dataset):
+#     def __init__(
+#         self,
+#         rl_dataset: RLDataset,
+#         values,
+#         returns,
+#         advantages,
+#         logits,
+#     ):
+#         self.rl_dataset = rl_dataset
+#         values, returns, advantages, logits = self._prepare_values_logits(
+#             values, returns, advantages, logits
+#         )
+#         self.values = values
+#         self.returns = returns
+#         self.advantages = advantages
+#         self.logits = logits
+#         if self.rl_dataset.prepare_for_rnn:
+#             (
+#                 self.values,
+#                 self.returns,
+#                 self.logits,
+#                 self.advantages,
+#                 lengths,
+#             ) = self._pad_values_logits(
+#                 values, returns, advantages, logits, self.rl_dataset.dones
+#             )
+
+#     def __len__(self):
+#         return self.rl_dataset.__len__()
+
+#     def _prepare_values_logits(self, values, returns, advantages, logits):
+#         """
+#         Prepares the data for training
+#         Args:
+#             states: The states
+#             actions: The actions
+#             rewards: The rewards
+#             dones: The dones
+#             truncated: The truncateds
+
+#         Returns:
+#             The prepared data
+#         """
+#         values = torch.from_numpy(values)
+#         returns = torch.from_numpy(returns)
+#         advantages = torch.from_numpy(advantages)
+#         logits = torch.from_numpy(logits)
+#         return values, returns, advantages, logits
+
+#     def _pad_values_logits(self, values, returns, advantages, logits, dones):
+#         """
+#         Creates a padded version of the data
+#         Args:
+#             values: The values
+#             logits: The logits
+
+#         Returns:
+#             The padded values and logits, and lengths
+#         """
+#         padded_values, lengths = pad_tensors_from_done_indices(values, dones)
+#         padded_returns, lengths = pad_tensors_from_done_indices(returns, dones)
+#         padded_advantages = pad_tensors_from_done_indices(advantages, dones)
+#         padded_logits, lengths = pad_tensors_from_done_indices(logits, dones)
+#         return (
+#             padded_values,
+#             padded_advantages,
+#             padded_returns,
+#             padded_logits,
+#             lengths,
+#         )
+
+#     def __getitems__(self, idx):
+#         """
+#         Gets the item at the index
+#         Args:
+#             idx: item idx
+
+#         Returns:
+#             batched version of the data at idx
+#             states, actions, rewards, dones, truncated, next_states, loss_flag
+
+#         """
+#         states, actions, rewards, dones, truncated, next_states, loss_flag = (
+#             self.rl_dataset.__getitems__(idx)
+#         )
+#         returns = self.returns[idx]
+#         values = self.values[idx]
+#         advantages = self.advantages[idx]
+#         logits = self.logits[idx]
+#         return (
+#             states,
+#             actions,
+#             rewards,
+#             dones,
+#             truncated,
+#             next_states,
+#             loss_flag,
+#             values,
+#             returns,
+#             advantages,
+#             logits,
+#         )
+
+#     def __getitem__(self, idx):
+#         """
+#         Gets the item at the index
+#         Args:
+#             idx: item idx
+
+#         Returns:
+#             batched version of the data at idx
+#             states, actions, rewards, dones, truncated, next_states, loss_flag
+
+#         """
+#         return self.__getitems__(idx)
+
+#     def collate_fn(self, batch):
+#         (
+#             states,
+#             actions,
+#             rewards,
+#             dones,
+#             truncated,
+#             next_states,
+#             loss_flag,
+#             values,
+#             returns,
+#             advantages,
+#             logits,
+#         ) = batch
+#         return (states, actions, dones, returns, advantages, logits, loss_flag)
+
+
 class PPODataset(Dataset):
     def __init__(
         self,
-        rl_dataset: RLDataset,
-        values,
+        states,
+        actions,
+        dones,
         returns,
         advantages,
         logits,
+        prepare_for_rnn,
     ):
-        self.rl_dataset = rl_dataset
-        values, returns, advantages, logits = self._prepare_values_logits(
-            values, returns, advantages, logits
+        obs_collection = (states,)
+        tensor_collection = actions, returns, advantages, logits
+
+        self.x_dataset = LambdaDataset(
+            obs_collection,
+            tensor_collection=tensor_collection,
+            dones=dones,
+            prepare_for_rnn=prepare_for_rnn,
         )
-        self.values = values
-        self.returns = returns
-        self.advantages = advantages
-        self.logits = logits
-        if self.rl_dataset.prepare_for_rnn:
-            (
-                self.values,
-                self.returns,
-                self.logits,
-                self.advantages,
-                lengths,
-            ) = self._pad_values_logits(
-                values, returns, advantages, logits, self.rl_dataset.dones
-            )
+        self.prepare_for_rnn = prepare_for_rnn
 
     def __len__(self):
-        return self.rl_dataset.__len__()
+        return len(self.x_dataset)
 
-    def _prepare_values_logits(self, values, returns, advantages, logits):
-        """
-        Prepares the data for training
-        Args:
-            states: The states
-            actions: The actions
-            rewards: The rewards
-            dones: The dones
-            truncated: The truncateds
-
-        Returns:
-            The prepared data
-        """
-        values = torch.from_numpy(values)
-        returns = torch.from_numpy(returns)
-        advantages = torch.from_numpy(advantages)
-        logits = torch.from_numpy(logits)
-        return values, returns, advantages, logits
-
-    def _pad_values_logits(self, values, returns, advantages, logits, dones):
-        """
-        Creates a padded version of the data
-        Args:
-            values: The values
-            logits: The logits
-
-        Returns:
-            The padded values and logits, and lengths
-        """
-        padded_values, lengths = pad_tensors_from_done_indices(values, dones)
-        padded_returns, lengths = pad_tensors_from_done_indices(returns, dones)
-        padded_advantages = pad_tensors_from_done_indices(advantages, dones)
-        padded_logits, lengths = pad_tensors_from_done_indices(logits, dones)
+    def __getitems__(self, idx):
+        obsWrapper_obs_collection, tensor_collection, dones, loss_flag = (
+            self.x_dataset.__getitems__(idx)
+        )
+        states = obsWrapper_obs_collection[0]
+        actions, returns, advantages, logits = tensor_collection
         return (
-            padded_values,
-            padded_advantages,
-            padded_returns,
-            padded_logits,
-            lengths,
+            states,
+            actions,
+            dones,
+            returns,
+            advantages,
+            logits,
+            loss_flag,
         )
 
     def __getitem__(self, idx):
-        """
-        Gets the item at the index
-        Args:
-            idx: item idx
-
-        Returns:
-            batched version of the data at idx
-            states, actions, rewards, dones, truncated, next_states, loss_flag
-
-        """
-        states, actions, rewards, dones, truncated, next_states, loss_flag = (
-            self.rl_dataset.__getitem__(idx)
-        )
-        returns = self.returns[idx]
-        values = self.values[idx]
-        advantages = self.advantages[idx]
-        logits = self.logits[idx]
-        return (
-            states,
-            actions,
-            rewards,
-            dones,
-            truncated,
-            next_states,
-            loss_flag,
-            values,
-            returns,
-            advantages,
-            logits,
-        )
+        return self.__getitems__(idx)
 
     def collate_fn(self, batch):
-        (
-            states,
-            actions,
-            rewards,
-            dones,
-            truncated,
-            next_states,
-            loss_flag,
-            values,
-            returns,
-            advantages,
-            logits,
-        ) = zip(*batch)
-        (
-            states,
-            actions,
-            rewards,
-            dones,
-            truncated,
-            next_states,
-            loss_flag,
-        ) = self.rl_dataset.collate_fn(
-            list(
-                zip(states, actions, rewards, dones, truncated, next_states, loss_flag)
-            )
-        )
-        values = torch.stack(values)
-        returns = torch.stack(returns)
-        advantages = torch.stack(advantages)
-        logits = torch.stack(logits)
-        return (states, actions, dones, returns, advantages, logits, loss_flag)
-        return (
-            states,
-            actions,
-            rewards,
-            dones,
-            truncated,
-            values,
-            returns,
-            advantages,
-            logits,
-            loss_flag,
-        )
+        return batch
 
 
 class PPOData(IData):
     def __init__(
         self,
-        rl_data: RLData,
-        values,
+        states,
+        actions,
+        dones,
         returns,
         advantages,
         logits,
+        prepare_for_rnn,
         num_workers: int = 2,
     ):
         self.num_workers = num_workers
-        self.rl_data = rl_data
+        self.prepare_for_rnn = prepare_for_rnn
         self.dataset = PPODataset(
-            rl_data.dataset,
-            values,
-            returns,
-            advantages,
-            logits,
+            states, actions, dones, returns, advantages, logits, prepare_for_rnn
         )
-        self.can_shuffle = False if self.rl_data.prepare_for_rnn else True
+        self.can_shuffle = False if self.prepare_for_rnn else True
 
     def get_data_loader(self, batch_size, shuffle=True):
         if not (shuffle == self.can_shuffle or shuffle == False):
@@ -404,43 +442,32 @@ class PPO_Agent(RL_Agent):
     def get_trajectories_data(self):
         return self._get_ppo_experiences()
 
-    # def reccurent_minibatch_generator(self, padded_data, max_len):
-    #     # write a code piece
-    #     # run a for loop that goes through the padded states and calculates the values and logits
-    #     num_sequences_per_batch = self.batch_size // self.num_parallel_envs
-    #     # Arrange a list that determines the sequence count for each mini batch
-    #     # for i in range(0, max_len, num_sequences_per_batch):
+    def calc_logits_values(self, states, actions, dones):
+        ds = LambdaDataset(
+            obsWrapper_obs_collection=(states,),
+            tensor_collection=(actions,),
+            dones=dones,
+            prepare_for_rnn=self.contains_reccurent_nn(),
+        )
+        dl = DataLoader(
+            ds,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=2,
+            pin_memory=True,
+            drop_last=False,
+            collate_fn=ds.collate_fn,
+        )
 
-    #     for i in range(0, max_len, num_sequences_per_batch):
-    #         temp = [
-    #             d[:, i : i + num_sequences_per_batch].to(self.device)
-    #             for d in padded_data
-    #         ]
-    #         yield temp
-
-    # def minibatch_generator(self, data):
-    #     # write a code piece
-    #     # run a for loop that goes through the padded states and calculates the values and logits
-    #     # Arrange a list that determines the sequence count for each mini batch
-
-    #     for i in range(0, len(data), self.batch_size):
-    #         temp = [d[:, i : i + self.batch_size].to(self.device) for d in data]
-    #         yield temp
-
-    def calc_logits_values(self, trajectory_data: RLData):
-        mb_gen = trajectory_data.get_data_loader(self.batch_size, shuffle=False)
         values = []
         logits = []
         self.set_eval_mode()
         with torch.no_grad():
-            for mb in mb_gen:
+            for mb in dl:
                 (
                     batched_states,
                     batched_actions,
-                    batched_rewards,
                     batched_dones,
-                    batched_truncated,
-                    batched_next_states,
                     batched_loss_flags,
                 ) = mb
                 batched_actions = batched_actions.to(self.device, non_blocking=True)
@@ -510,16 +537,7 @@ class PPO_Agent(RL_Agent):
             states, actions, rewards, dones, truncated, next_states = (
                 self.experience.get_last_episodes(num_episodes)
             )
-        rl_data = RLData(
-            states,
-            actions,
-            rewards,
-            dones,
-            truncated,
-            next_states,
-            self.contains_reccurent_nn(),
-        )
-        logits, values = self.calc_logits_values(rl_data)
+        logits, values = self.calc_logits_values(states, actions, dones)
         values = values.detach().cpu().numpy()
         logits = logits.detach().cpu().numpy()
         advantages, returns = calc_gaes(
@@ -531,8 +549,9 @@ class PPO_Agent(RL_Agent):
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-10)
         returns = np.expand_dims(returns, -1)
         trajectory_data = PPOData(
-            rl_data,
-            values,
+            states,
+            actions,
+            dones,
             returns,
             advantages,
             logits,
@@ -663,50 +682,22 @@ class PPO_Agent(RL_Agent):
         Args: exp (tuple): Experience tuple.
         """
 
-        # test_dataloader = DataLoader(test_data, batch_size=64, shuffle=True)
-
-        # all_samples_len = len(states)
-        # b_size = self.batch_size if not self.policy_nn.is_rnn else all_samples_len
-        # rand_perm = False if (self.policy_nn.is_rnn) else True
         shuffle = False if (self.policy_nn.is_rnn) else True
         ppo_dataloader = trajectory_data.get_data_loader(
             self.batch_size, shuffle=shuffle
         )
         for e in range(self.num_epochs_per_update):
-            # mini_batch_generator = self.rollout.mini_batch_generator()
-            # for mini_batch in mini_batch_generator:
-            # for b in range(0, all_samples_len, b_size):
-            # indices_perm = (
-            #     torch.randperm(len(returns))
-            #     if rand_perm
-            #     else torch.arange(len(returns))
-            # )
-            # states = states[indices_perm]
-            # actions = actions[indices_perm]
-            # returns = returns[indices_perm]
-            # advantages = advantages[indices_perm]
-            # logits = logits[indices_perm]
             kl_div_bool = False
-            # for b in range(0, all_samples_len, b_size):
             for b, mb in enumerate(ppo_dataloader):
                 (
                     batch_states,
                     batched_actions,
-                    # batched_rewards,
                     batched_dones,
-                    # batched_truncated,
-                    # batched_values,
                     batched_returns,
                     batched_advantages,
                     batched_logits,
                     batched_loss_flags,
                 ) = mb
-                # batch_states = states[b : b + b_size]
-                # batched_actions = actions[b : b + b_size]
-                # batched_returns = returns[b : b + b_size]
-                # batched_advantage = advantages[b : b + b_size]
-                # batched_logits = logits[b : b + b_size]
-                # batched_dones = dones[b : b + b_size]
                 batched_returns = batched_returns.to(self.device, non_blocking=True)
                 batched_advantages = batched_advantages.to(
                     self.device, non_blocking=True
@@ -736,9 +727,7 @@ class PPO_Agent(RL_Agent):
                 actor_loss = (
                     -(torch.min(surr1, surr2).mean()) - self.entropy_coeff * entropy
                 )
-                kl_div = (
-                    -(ratio * log_ratio - (ratio - 1)).mean().item()
-                )  # kl_div = (old_log_probs - new_log_probs).mean().item() #
+                kl_div = -(ratio * log_ratio - (ratio - 1)).mean().item()
 
                 if np.abs(kl_div) > self.kl_div_thresh:
                     kl_div_bool = True
