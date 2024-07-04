@@ -1,12 +1,61 @@
-from collections import namedtuple
-import multiprocessing
-from multiprocessing import Process, Pipe
+
 import numpy as np
 import torch
 import copy
-import gc
 import gymnasium as gym
 from collections import defaultdict
+from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
+
+def pad_from_done_indices(data, dones):
+    """
+    Packs the data from the done indices to torch.nn.utils.rnn.PackedSequence
+
+    """
+    if isinstance(data, ObsWrapper):
+        return pad_states_from_done_indices(data, dones)
+    elif isinstance(data, torch.Tensor):
+        return pad_tensors_from_done_indices(data, dones)
+
+
+def pad_states_from_done_indices(data, dones):
+    """
+    Packs the data from the done indices to torch.nn.utils.rnn.PackedSequence
+
+    """
+    done_indices = torch.where(dones == True)[0].cpu().numpy().astype(np.int32)
+    padded_obs = ObsWrapper(tensors=True)
+    for k in data:
+        temp = []
+        curr_idx = 0
+        for i, d_i in enumerate(done_indices):
+            temp.append(data[k][curr_idx : d_i + 1])
+            curr_idx = d_i + 1  #
+        padded_seq_batch = torch.nn.utils.rnn.pad_sequence(temp, batch_first=True)
+        padded_obs[k] = padded_seq_batch
+    lengths = done_indices - np.roll(done_indices, 1)
+    lengths[0] = done_indices[0]
+    return padded_obs, lengths
+
+
+def pad_tensors_from_done_indices(data, dones):
+    """
+    Packs the data from the done indices to torch.nn.utils.rnn.PackedSequence
+
+    """
+    done_indices = torch.where(dones == True)[0].cpu().numpy().astype(np.int32)
+    temp = []
+    curr_idx = 0
+    for i, d_i in enumerate(done_indices):
+        temp.append(data[curr_idx : d_i + 1])
+        curr_idx = d_i + 1  #
+    padded_seq_batch = torch.nn.utils.rnn.pad_sequence(temp, batch_first=True)
+    padded_obs = padded_seq_batch
+    lengths = done_indices - np.roll(done_indices, 1)
+    lengths[0] = done_indices[0]
+    return padded_obs, lengths
+
+
 
 
 def calc_gaes(rewards, values, terminated, discount_factor=0.99, decay=0.9):
@@ -560,272 +609,132 @@ class ObsWrapper:
             return ObsWrapper(temp_dict)
 
 
-def worker(env, conn):
-    """
-    This function is used to run an environment in a separate process.
-    Args:
-        env: The environment to run.
-        conn: The connection to the main process.
-    """
-    proc_running = True
 
-    done = False
+from abc import ABC
+class IData(ABC):
+    def __init__(self, dataset: Dataset, prepare_for_rnn, num_workers: int= 0):
+        self.dataset = dataset
+        self.prepare_for_rnn = prepare_for_rnn
+        self.num_workers = num_workers
+        self.can_shuffle = False if self.prepare_for_rnn else True
 
-    while proc_running:
-        cmd, msg = conn.recv()
+    def get_dataloader(self, batch_size, shuffle):
+        if not (shuffle == self.can_shuffle or shuffle == False):
+            logging.warning(
+                "Shuffle is not allowed when preparing data for RNN, changing shuffle to False"
+            )
+            shuffle = False
 
-        if cmd == "step":
-            if done:
-                next_state, _ = env.reset()
-
-            next_state, reward, terminated, truncated, _ = env.step(msg)
-            conn.send((next_state, reward, terminated, truncated, _))
-            done = terminated or truncated
-            if done:
-                next_state = env.reset()
-
-        elif cmd == "reset":
-            conn.send(env.reset())
-
-        elif cmd == "get_env":
-            conn.send(env)
-
-        elif cmd == "close":
-            proc_running = False
-            return
-
-        elif cmd == "change_env":
-            env = msg
-            gc.collect()
-            done = False
-        else:
-            raise Exception("Command not implemented")
-
-
-class ParallelEnv:
-    """
-    This class is used to run multiple environments in parallel.
-    """
-
-    def __init__(self, env: gym.Env, num_envs: int):
-        """
-        Args:
-            env: The environment to run in parallel.
-            num_envs: The number of environments to run in parallel.
-            for_val: If true, the environments will be run in a fixed order to allow for deterministic evaluation.
-        """
-        self.num_envs = num_envs
-        if num_envs > 1:
-            self.p_env = ParallelEnv_m(env, num_envs)
-        else:
-            self.p_env = SingleEnv_m(env)
-
-    def __del__(self):
-        self.p_env.close_procs()
-
-    def change_env(self, env):
-        """
-        Changes the environment to run in parallel.
-        Args:
-            env: The new environment.
-        """
-        self.p_env.change_env(env)
-
-    def get_envs(self):
-        """
-        Returns:
-            A list of the environments.
-        """
-        return self.p_env.get_envs()
-
-    def reset(self):
-        """
-        Resets the environments.
-        """
-        return self.p_env.reset()
-
-    def step(self, actions):
-        """
-        Takes a step in the environments.
-        Args:
-            actions: The actions (n, action_shape) to take in the environments.
-        """
-        return self.p_env.step(actions)
-
-    def close_procs(self):
-        """
-        Closes the processes.
-        """
-        self.p_env.close_procs()
-
-    def render(self):
-        """
-        Renders the environments. - not supported for multi envs - renders just the base env - good for single env case
-        """
-        self.p_env.render()
-
-
-class ParallelEnv_m:
-    def __init__(self, env, num_envs):
-        """
-        Args:
-            env: The environment to run in parallel.
-            num_envs: The number of environments to run in parallel.
-            for_val: If true, the environments will be run in a fixed order to allow for deterministic evaluation.
-        """
-        self.num_envs = num_envs
-        self.process = namedtuple(
-            "Process", field_names=["proc", "connection", "worker_conn"]
+        return DataLoader(
+            self.dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=self.num_workers,
+            pin_memory=True,
+            drop_last=False,
+            collate_fn=self.dataset.collate_fn,
         )
-        self.comm = []
-        for idx in range(self.num_envs):
-            parent_conn, worker_conn = Pipe()
-            proc = Process(target=worker, args=((copy.deepcopy(env)), worker_conn))
-            proc.start()
-            self.comm.append(self.process(proc, parent_conn, worker_conn))
 
-    def change_env(self, env):
-        """
-        Changes the environment to run in parallel.
-        Args:
-            env: The new environment.
-        """
-        [p.connection.send(("change_env", copy.deepcopy(env))) for p in self.comm]
+class LambdaDataset(Dataset):
+    def __init__(
+        self,
+        obsWrapper_obs_collection: tuple[ObsWrapper],
+        tensor_collection: tuple[torch.tensor],
+        dones: torch.tensor,
+        prepare_for_rnn: bool,
+    ):
+        obsWrapper_obs_collection, tensor_collection, dones = self._prepare_data(
+            obsWrapper_obs_collection, tensor_collection, dones
+        )
+        self.obsWrapper_obs_collection = obsWrapper_obs_collection
+        self.tensor_collection = tensor_collection
+        self.dones = dones
+        self.loss_flag = torch.ones_like(dones)
+        self.prepare_for_rnn = prepare_for_rnn
+        self.max_len = len(dones)
+        if self.prepare_for_rnn:
+            (
+                self.obsWrapper_obs_collection,
+                self.tensor_collection,
+                self.loss_flag,
+                lengths,
+            ) = self._pad_experiecne(
+                self.obsWrapper_obs_collection, self.tensor_collection, dones
+            )
+            self.max_len = lengths.max()
 
-    def get_envs(self):
-        """
-        Returns:
-            A list of the environments.
-        """
-        [p.connection.send(("get_env", "")) for p in self.comm]
-        res = [p.connection.recv() for p in self.comm]
-        return res
+    def __len__(self):
+        return self.max_len
 
-    def reset(self):
-        """
-        Resets the environments.
-        """
-        [p.connection.send(("reset", "")) for p in self.comm]
-        res = [p.connection.recv() for p in self.comm]
-        return res
+    def _prepare_data(self, obsWrapper_obs_collection, tensor_collection, dones):
 
-    def step(self, actions):
-        """
-        Takes a step in the environments.
-        Args:
-            actions: The actions (n, action_shape) to take in the environments.
-        """
-        # send actions to envs
-        [
-            p.connection.send(("step", action))
-            for i, p, action in zip(range(self.num_envs), self.comm, actions)
-        ]
+        obsWrapper_obs_collection = tuple(
+            obs.get_as_tensors("cpu") for obs in obsWrapper_obs_collection
+        )
+        tensor_collection = tuple(
+            torch.from_numpy(tensor) for tensor in tensor_collection
+        )
+        dones = torch.from_numpy(dones)
+        return obsWrapper_obs_collection, tensor_collection, dones
 
-        # Receive response from envs.
-        res = [p.connection.recv() for p in self.comm]
-        next_states, rewards, terminated, truncated, _ = zip(*res)
-        rewards = np.array(rewards)
-        terminated = np.array(terminated)
-        truncated = np.array(truncated)
-        _ = np.array(_)
+    def _pad_experiecne(self, obsWrapper_obs_collection, tensor_collection, dones):
+        """ """
+        obsWrapper_obs_collection = (
+            pad_states_from_done_indices(obs, dones)[0]
+            for obs in obsWrapper_obs_collection
+        )
+        tensor_collection = (
+            pad_tensors_from_done_indices(tensor, dones)[0]
+            for tensor in tensor_collection
+        )
+        dones, lengths = pad_from_done_indices(dones, dones)
+        tensor_collection = (torch.from_numpy(tensor) for tensor in tensor_collection)
+        loss_flag, lengths = pad_tensors_from_done_indices(
+            torch.ones_like(dones), dones
+        )
+        return (
+            obsWrapper_obs_collection,
+            tensor_collection,
+            loss_flag,
+            lengths,
+        )
 
-        return next_states, rewards, terminated, truncated, _
+    def __getitems__(self, idx):
+        obsWrapper_obs_collection = tuple(
+            obs[idx] for obs in self.obsWrapper_obs_collection
+        )
+        tensor_collection = tuple(tensor[idx] for tensor in self.tensor_collection)
+        return (
+            obsWrapper_obs_collection,
+            tensor_collection,
+            self.dones[idx],
+            self.loss_flag[idx],
+        )
 
-    def render(self):
-        print("Cant draw parallel envs [WIP]")
+    def __getitem__(self, idx):
+        return self.__getitems__(idx)
 
-    def __del__(self):
-        self.close_procs()
+    def collate_fn(self, batch):
+        return batch
 
-    def close_procs(self):
-        """
-        Closes the processes.
-        """
-        for p in self.comm:
-            try:
-                p.connection.send(("close", ""))
-                p.connection.close()
-                p.worker_conn.close()
-            except Exception as e:
-                print("close failed", p)
-                print("close failed -reason:", e)
-                pass
-        self.comm = []
+class LambdaData(IData):
+    def __init__(
+        self,
+        obsWrapper_obs_collection: tuple[ObsWrapper],
+        tensor_collection: tuple[torch.tensor],
+        dones: torch.tensor,
+        prepare_for_rnn: bool,
+        num_workers: int= 0,
+    ) -> None:
+        dataset = LambdaDataset(
+            obsWrapper_obs_collection, tensor_collection, dones, prepare_for_rnn
+        )
+        super().__init__(dataset, prepare_for_rnn, num_workers)
 
-
-class SingleEnv_m:
-    """
-    This class is used to run a single environment.
-    """
-
-    def __init__(self, env):
-        """
-        Args:
-            env: The environment to run in parallel.
-        """
-        # print(env.game_index)
-        self.env = copy.deepcopy(env)
-        self.num_envs = 1
-
-    def change_env(self, env):
-        """
-        Changes the environment to run.
-        """
-        self.env = env
-
-    def get_envs(self):
-        """
-        Returns:
-            A list of the environments - list with single item in this case.
-        """
-        return [self.env]
-
-    def reset(self):
-        """
-        Resets the environment.
-        """
-        s, info = self.env.reset()
-        if type(s) != dict:
-            return [(np.array(s, ndmin=1), info)]
-        else:
-            return [(s, info)]
-
-    def step(self, actions):
-        """
-        Takes a step in the environment.
-        Args:
-            actions: The actions (1, action_shape) to take in the environment.
-        """
-        action = None
-        try:
-            iter(actions)
-            action = actions[0]
-        except TypeError:
-            action = actions
-        next_states, rewards, terminated, trunc, _ = self.env.step(action)
-        if type(next_states) != dict:
-            next_states = np.array(next_states, ndmin=2)
-        else:
-            next_states = [next_states]
-        rewards = np.array(rewards, ndmin=1)
-        terminated = np.array(terminated, ndmin=1)
-        trunc = np.array(trunc, ndmin=1)
-        return next_states, rewards, terminated, trunc, _
-
-    def render(self):
-        """
-        Renders the environment.
-        """
-        self.env.render()
-
-    def close_procs(self):
-        """
-        Closes the processes[actually is a noop in this case].
-        """
-        pass
 
 
 import pandas as pd
+
 
 
 class TrainMetrics:

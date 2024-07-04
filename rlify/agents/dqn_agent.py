@@ -131,28 +131,35 @@ class DQN_Agent(VDQN_Agent):
         super().reset_rnn_hidden()
         self.target_Q_model.reset()
 
-    def update_policy(self, *exp):
+    def update_policy(self, trajectory_data):
         """
         Updates the policy.
         Using the DQN algorithm.
         """
-
-        states, actions, rewards, dones, truncated, next_states, returns = exp
-
+        shuffle = False if (self.Q_model.is_rnn) else True
+        dataloader = trajectory_data.get_dataloader(self.batch_size, shuffle=shuffle)
         for g in range(self.num_epochs_per_update):
-            terminated = dones * (1 - truncated)
-            all_samples_len = len(states)
+            for b, mb in enumerate(dataloader):
+                (
+                    batched_states,
+                    batched_actions,
+                    batched_rewards,
+                    batched_returns,
+                    batched_dones,
+                    batched_truncated,
+                    batched_next_states,
+                    batched_loss_flags,
+                ) = mb
+                batched_next_states = batched_next_states.to(self.device, non_blocking=True)
+                batched_not_terminated = 1 - batched_dones * (1 - batched_truncated)
+                batched_not_terminated = batched_not_terminated.to(self.device, non_blocking=True)
+                batched_returns = batched_returns.to(self.device, non_blocking=True)
+                batched_rewards = batched_rewards.to(self.device, non_blocking=True)
+                batched_actions = batched_actions.to(self.device, non_blocking=True)
+                batched_states = batched_states.to(self.device)
+                batched_dones = batched_dones.to(self.device)
 
-            b_size = all_samples_len if self.Q_model.is_rnn else self.batch_size
 
-            for b in range(0, all_samples_len, b_size):
-                batched_states = states[b : b + b_size]
-                batched_actions = actions[b : b + b_size].squeeze()
-                batched_next_states = next_states[b : b + b_size]
-                batched_rewards = rewards[b : b + b_size]
-                batched_dones = dones[b : b + b_size]
-                batched_terminated = terminated[b : b + b_size]
-                batched_returns = returns[b : b + b_size]
                 v_table = self.Q_model(batched_states, batched_dones)
 
                 # only because last batch is smaller

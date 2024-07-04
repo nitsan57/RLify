@@ -3,11 +3,73 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 from rlify.agents.explorers import Explorer, RandomExplorer
-from rlify.agents.agent_utils import calc_returns
+from rlify.agents.agent_utils import IData, LambdaDataset, calc_returns
 from rlify.agents.drl_agent import RL_Agent, RLData
 import adabelief_pytorch
 from rlify.models.base_model import BaseModel
 from rlify.utils import HiddenPrints
+
+from torch.utils.data import Dataset
+
+class RLDataset(Dataset):
+    def __init__(
+        self, states, actions, rewards,returns, dones, truncated, next_states, prepare_for_rnn
+    ):
+        obs_collection = states, next_states
+        tensor_collection = actions, rewards,returns, truncated
+
+        self.x_dataset = LambdaDataset(
+            obs_collection,
+            tensor_collection=tensor_collection,
+            dones=dones,
+            prepare_for_rnn=prepare_for_rnn,
+        )
+        self.prepare_for_rnn = prepare_for_rnn
+
+    def __len__(self):
+        return len(self.x_dataset)
+
+    def __getitems__(self, idx):
+        obsWrapper_obs_collection, tensor_collection, dones, loss_flag = (
+            self.x_dataset.__getitems__(idx)
+        )
+        states, next_states = obsWrapper_obs_collection
+        actions, rewards,returns, truncated = tensor_collection
+        return (
+            states,
+            actions,
+            rewards,
+            returns,
+            dones,
+            truncated,
+            next_states,
+            loss_flag,
+        )
+
+    def __getitem__(self, idx):
+        return self.__getitems__(idx)
+
+    def collate_fn(self, batch):
+        return batch
+
+class RLData(IData):
+    def __init__(
+        self,
+        states,
+        actions,
+        rewards,
+        returns,
+        dones,
+        truncated,
+        next_states,
+        prepare_for_rnn,
+        num_workers: int = 0,
+    ):
+        
+        dataset = RLDataset(
+            states, actions, rewards,returns, dones, truncated, next_states, prepare_for_rnn
+        )
+        super().__init__(dataset, prepare_for_rnn, num_workers)
 
 
 class VDQN_Agent(RL_Agent):
@@ -169,81 +231,54 @@ class VDQN_Agent(RL_Agent):
             tuple: (states, actions, rewards, dones, truncated, next_states, returns)
 
         """
-        # random_samples = not self.Q_model.is_rnn
         first_experience_batch = self.experience.sample_random_episodes(
             self.num_parallel_envs
         )
         observations, actions, rewards, dones, truncated, next_observations = (
             first_experience_batch
         )
-
-        # rand_perm = torch.randperm(len(observations))
-        # if random_samples:
-        #     observations = observations[rand_perm]
-        #     actions = actions[rand_perm]
-        #     rewards = rewards[rand_perm]
-        #     dones = dones[rand_perm]
-        #     truncated = truncated[rand_perm]
-        #     next_observations = next_observations[rand_perm]
-        #     returns = returns[rand_perm]
-
-        # actions = torch.from_numpy(actions).to(self.device)
-        # rewards = torch.from_numpy(rewards).to(self.device)
-        # dones = torch.from_numpy(dones).to(self.device)
-        # truncated = torch.from_numpy(truncated).to(self.device)
-        # returns = torch.from_numpy(returns).to(self.device)
-        # observations = observations.get_as_tensors(self.device)
-        # next_observations = next_observations.get_as_tensors(self.device)
+        returns = calc_returns(rewards, (dones * (1 - truncated)), self.discount_factor)
         rl_data = RLData(
             observations,
             actions,
             rewards,
+            returns,
             dones,
             truncated,
             next_observations,
             self.contains_reccurent_nn(),
         )
         return rl_data
-        return (
-            observations,
-            actions,
-            rewards,
-            dones,
-            truncated,
-            next_observations,
-        )
+        
 
     def update_policy(self, trajectory_data: RLData):
-        num_grad_updates = self.num_epochs_per_update
-        # states, actions, rewards, dones, truncated, next_states = exp
-        # returns = calc_returns(rewards, (dones * (1 - truncated)), self.discount_factor)
-        # ds = dataset(states, actions, rewards, dones, truncated, next_states)
-        shuffle = False if (self.policy_nn.is_rnn) else True
+        shuffle = False if (self.Q_model.is_rnn) else True
         dataloader = trajectory_data.get_dataloader(self.batch_size, shuffle=shuffle)
-        for g in range(num_grad_updates):
-            # terminated = dones * (1 - truncated)
-            # not_terminated = 1 - terminated
-            # all_samples_len = len(states)
-
-            # b_size = all_samples_len if self.Q_model.is_rnn else self.batch_size
-
+        for g in range(self.num_epochs_per_update):
             for b, mb in enumerate(dataloader):
                 (
-                    batch_states,
+                    batched_states,
                     batched_actions,
                     batched_rewards,
+                    batched_returns,
                     batched_dones,
                     batched_truncated,
                     batched_next_states,
                     batched_loss_flags,
                 ) = mb
+                batched_next_states = batched_next_states.to(self.device, non_blocking=True)
                 batched_not_terminated = 1 - batched_dones * (1 - batched_truncated)
-                batched_returns = batched_rewards  # returns[b : b + b_size]
+                batched_not_terminated = batched_not_terminated.to(self.device, non_blocking=True)
+                batched_returns = batched_returns.to(self.device, non_blocking=True)
+                batched_rewards = batched_rewards.to(self.device, non_blocking=True)
+                batched_actions = batched_actions.to(self.device, non_blocking=True)
+                batched_states = batched_states.to(self.device)
+                batched_dones = batched_dones.to(self.device)
 
-                v_table = self.Q_model(batch_states, batched_dones)
+                v_table = self.Q_model(batched_states, batched_dones)
 
                 # only because last batch is smaller
-                real_batch_size = batch_states.len
+                real_batch_size = batched_states.len
                 q_values = v_table[np.arange(real_batch_size), batched_actions.long()]
                 with torch.no_grad():
                     q_next = (
