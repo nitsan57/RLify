@@ -6,6 +6,7 @@ import gc
 import copy
 import numpy as np
 
+
 def worker(env, conn):
     """
     This function is used to run an environment in a separate process.

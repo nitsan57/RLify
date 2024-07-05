@@ -1,4 +1,3 @@
-from attr import dataclass
 from tqdm import tqdm
 from abc import ABC, abstractmethod
 import gymnasium as gym
@@ -8,7 +7,7 @@ import numpy as np
 import functools
 import operator
 from .agent_utils import LambdaDataset, TrainMetrics
-from environments.env_utils import ParallelEnv
+from rlify.environments.env_utils import ParallelEnv
 import torch
 from .agent_utils import ObsShapeWraper, ObsWrapper
 from rlify.agents.experience_replay import ExperienceReplay
@@ -23,6 +22,7 @@ import pygame
 
 logger = logging.getLogger(__name__)
 import datetime
+
 
 class RL_Agent(ABC):
     """
@@ -48,6 +48,7 @@ class RL_Agent(ABC):
         discount_factor: float = 0.99,
         reward_normalization=True,
         tensorboard_dir: str = "./tensorboard",
+        dataloader_workers: int = 0,
     ) -> None:
         """
 
@@ -68,7 +69,7 @@ class RL_Agent(ABC):
             
         """
         super(RL_Agent, self).__init__()
-
+        self.dataloader_workers = dataloader_workers
         self.id = uuid.uuid4()
         self.init_tb_writer(tensorboard_dir)
         self.num_epochs_per_update = num_epochs_per_update
@@ -491,9 +492,7 @@ class RL_Agent(ABC):
         return observations
         return (observations - self.norm_params["mean"]) / self.norm_params["std"]
 
-    def pre_process_obs_for_act(
-        self, observations: [np.array, ObsWrapper, dict], num_obs: int
-    ):
+    def pre_process_obs_for_act(self, observations: ObsWrapper | dict, num_obs: int):
         """
         Pre processes the observations for act
 

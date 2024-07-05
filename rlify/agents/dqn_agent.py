@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from rlify.agents.vdqn_agent import VDQN_Agent
+from rlify.agents.vdqn_agent import DQNData, VDQN_Agent
 import copy
 
 
@@ -131,13 +131,15 @@ class DQN_Agent(VDQN_Agent):
         super().reset_rnn_hidden()
         self.target_Q_model.reset()
 
-    def update_policy(self, trajectory_data):
+    def update_policy(self, trajectory_data: DQNData):
         """
         Updates the policy.
         Using the DQN algorithm.
         """
         shuffle = False if (self.Q_model.is_rnn) else True
-        dataloader = trajectory_data.get_dataloader(self.batch_size, shuffle=shuffle)
+        dataloader = trajectory_data.get_dataloader(
+            self.batch_size, shuffle=shuffle, num_workers=self.dataloader_workers
+        )
         for g in range(self.num_epochs_per_update):
             for b, mb in enumerate(dataloader):
                 (
@@ -150,16 +152,22 @@ class DQN_Agent(VDQN_Agent):
                     batched_next_states,
                     batched_loss_flags,
                 ) = mb
-                batched_next_states = batched_next_states.to(self.device, non_blocking=True)
+                batched_next_states = batched_next_states.to(
+                    self.device, non_blocking=True
+                )
+                batched_states = batched_states.to(self.device, non_blocking=True)
                 batched_not_terminated = 1 - batched_dones * (1 - batched_truncated)
-                batched_not_terminated = batched_not_terminated.to(self.device, non_blocking=True)
+                batched_not_terminated = batched_not_terminated.to(
+                    self.device, non_blocking=True
+                )
                 batched_returns = batched_returns.to(self.device, non_blocking=True)
                 batched_rewards = batched_rewards.to(self.device, non_blocking=True)
-                batched_actions = batched_actions.to(self.device, non_blocking=True)
-                batched_states = batched_states.to(self.device)
+                batched_actions = batched_actions.to(
+                    self.device, non_blocking=True
+                ).squeeze()
                 batched_dones = batched_dones.to(self.device)
-
-
+                batched_terminated = 1 - batched_not_terminated
+                breakpoint()
                 v_table = self.Q_model(batched_states, batched_dones)
 
                 # only because last batch is smaller

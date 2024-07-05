@@ -4,19 +4,28 @@ import torch.optim as optim
 import numpy as np
 from rlify.agents.explorers import Explorer, RandomExplorer
 from rlify.agents.agent_utils import IData, LambdaDataset, calc_returns
-from rlify.agents.drl_agent import RL_Agent, RLData
+from rlify.agents.drl_agent import RL_Agent
 import adabelief_pytorch
 from rlify.models.base_model import BaseModel
 from rlify.utils import HiddenPrints
 
 from torch.utils.data import Dataset
 
-class RLDataset(Dataset):
+
+class DQNDataset(Dataset):
     def __init__(
-        self, states, actions, rewards,returns, dones, truncated, next_states, prepare_for_rnn
+        self,
+        states,
+        actions,
+        rewards,
+        returns,
+        dones,
+        truncated,
+        next_states,
+        prepare_for_rnn,
     ):
         obs_collection = states, next_states
-        tensor_collection = actions, rewards,returns, truncated
+        tensor_collection = actions, rewards, returns, truncated
 
         self.x_dataset = LambdaDataset(
             obs_collection,
@@ -34,7 +43,7 @@ class RLDataset(Dataset):
             self.x_dataset.__getitems__(idx)
         )
         states, next_states = obsWrapper_obs_collection
-        actions, rewards,returns, truncated = tensor_collection
+        actions, rewards, returns, truncated = tensor_collection
         return (
             states,
             actions,
@@ -52,7 +61,8 @@ class RLDataset(Dataset):
     def collate_fn(self, batch):
         return batch
 
-class RLData(IData):
+
+class DQNData(IData):
     def __init__(
         self,
         states,
@@ -63,13 +73,19 @@ class RLData(IData):
         truncated,
         next_states,
         prepare_for_rnn,
-        num_workers: int = 0,
     ):
-        
-        dataset = RLDataset(
-            states, actions, rewards,returns, dones, truncated, next_states, prepare_for_rnn
+
+        dataset = DQNDataset(
+            states,
+            actions,
+            rewards,
+            returns,
+            dones,
+            truncated,
+            next_states,
+            prepare_for_rnn,
         )
-        super().__init__(dataset, prepare_for_rnn, num_workers)
+        super().__init__(dataset, prepare_for_rnn)
 
 
 class VDQN_Agent(RL_Agent):
@@ -238,7 +254,7 @@ class VDQN_Agent(RL_Agent):
             first_experience_batch
         )
         returns = calc_returns(rewards, (dones * (1 - truncated)), self.discount_factor)
-        rl_data = RLData(
+        rl_data = DQNData(
             observations,
             actions,
             rewards,
@@ -249,11 +265,12 @@ class VDQN_Agent(RL_Agent):
             self.contains_reccurent_nn(),
         )
         return rl_data
-        
 
-    def update_policy(self, trajectory_data: RLData):
+    def update_policy(self, trajectory_data: DQNData):
         shuffle = False if (self.Q_model.is_rnn) else True
-        dataloader = trajectory_data.get_dataloader(self.batch_size, shuffle=shuffle)
+        dataloader = trajectory_data.get_dataloader(
+            self.batch_size, shuffle=shuffle, num_workers=self.dataloader_workers
+        )
         for g in range(self.num_epochs_per_update):
             for b, mb in enumerate(dataloader):
                 (
@@ -266,15 +283,21 @@ class VDQN_Agent(RL_Agent):
                     batched_next_states,
                     batched_loss_flags,
                 ) = mb
-                batched_next_states = batched_next_states.to(self.device, non_blocking=True)
+                batched_next_states = batched_next_states.to(
+                    self.device, non_blocking=True
+                )
                 batched_not_terminated = 1 - batched_dones * (1 - batched_truncated)
-                batched_not_terminated = batched_not_terminated.to(self.device, non_blocking=True)
+                batched_not_terminated = batched_not_terminated.to(
+                    self.device, non_blocking=True
+                )
                 batched_returns = batched_returns.to(self.device, non_blocking=True)
                 batched_rewards = batched_rewards.to(self.device, non_blocking=True)
-                batched_actions = batched_actions.to(self.device, non_blocking=True)
+                batched_actions = batched_actions.to(
+                    self.device, non_blocking=True
+                ).squeeze()
                 batched_states = batched_states.to(self.device)
                 batched_dones = batched_dones.to(self.device)
-
+                breakpoint()
                 v_table = self.Q_model(batched_states, batched_dones)
 
                 # only because last batch is smaller

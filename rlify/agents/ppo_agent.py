@@ -4,23 +4,16 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 from torch.utils.data.dataset import ConcatDataset
-from .agent_utils import ObsWrapper, calc_gaes
+from .agent_utils import ObsWrapper, calc_gaes, LambdaDataset, IData, LambdaData
 from rlify.agents.experience_replay import ForgettingExperienceReplay
 from .action_spaces_utils import MCAW, MDA
 from .explorers import Explorer, RandomExplorer
-from .drl_agent import (
-    IData,
-    LambdaData,
-    RL_Agent,
-    RLData,
-    RLDataset,
-    LambdaDataset,
-    pad_tensors_from_done_indices,
-)
+from .drl_agent import RL_Agent
 import adabelief_pytorch
 from rlify.utils import HiddenPrints
 import gc
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
+
 
 class PPODataset(Dataset):
     def __init__(
@@ -80,13 +73,13 @@ class PPOData(IData):
         advantages,
         logits,
         prepare_for_rnn,
-        num_workers: int= 0,
     ):
         dataset = PPODataset(
             states, actions, dones, returns, advantages, logits, prepare_for_rnn
         )
-        super().__init__(dataset, prepare_for_rnn, num_workers)
-        
+        super().__init__(dataset, prepare_for_rnn)
+
+
 class PPO_Agent(RL_Agent):
     """Proximal Policy Optimization (PPO) reinforcement learning agent.
     Inherits from RL_Agent.
@@ -288,12 +281,16 @@ class PPO_Agent(RL_Agent):
     def get_trajectories_data(self):
         return self._get_ppo_experiences()
 
-    def calc_logits_values(self, states, actions, dones):  
-        data = LambdaData(obsWrapper_obs_collection=(states,),
+    def calc_logits_values(self, states, actions, dones):
+        data = LambdaData(
+            obsWrapper_obs_collection=(states,),
             tensor_collection=(actions,),
             dones=dones,
-            prepare_for_rnn=self.contains_reccurent_nn(),)
-        dl = data.get_dataloader(self.batch_size, shuffle=False)
+            prepare_for_rnn=self.contains_reccurent_nn(),
+        )
+        dl = data.get_dataloader(
+            self.batch_size, shuffle=False, num_workers=self.dataloader_workers
+        )
 
         values = []
         logits = []
@@ -319,8 +316,10 @@ class PPO_Agent(RL_Agent):
                     batched_states, batched_dones.to(self.device)
                 ).log_prob(batched_actions)
                 logits.append(logit.to("cpu"))
-        return torch.cat(logits).detach().cpu().numpy(), torch.cat(values).detach().cpu().numpy()
-
+        return (
+            torch.cat(logits).detach().cpu().numpy(),
+            torch.cat(values).detach().cpu().numpy(),
+        )
 
     def _get_ppo_experiences(self, num_episodes=None):
         """
@@ -353,10 +352,9 @@ class PPO_Agent(RL_Agent):
             returns,
             advantages,
             logits,
-            self.contains_reccurent_nn()
+            self.contains_reccurent_nn(),
         )
         return trajectory_data
-
 
     def update_policy(self, trajectory_data: PPOData):
         """
@@ -366,7 +364,7 @@ class PPO_Agent(RL_Agent):
 
         shuffle = False if (self.policy_nn.is_rnn) else True
         ppo_dataloader = trajectory_data.get_dataloader(
-            self.batch_size, shuffle=shuffle
+            self.batch_size, shuffle=shuffle, num_workers=self.dataloader_workers
         )
         for e in range(self.num_epochs_per_update):
             kl_div_bool = False
@@ -388,6 +386,7 @@ class PPO_Agent(RL_Agent):
                 batched_actions = batched_actions.to(self.device, non_blocking=True)
                 batch_states = batch_states.to(self.device)
                 batched_dones = batched_dones.to(self.device)
+                breakpoint()
                 dist = self.actor_model(batch_states, batched_dones)
                 critic_values = self.critic_nn(batch_states, batched_dones)
                 new_log_probs = dist.log_prob(batched_actions)

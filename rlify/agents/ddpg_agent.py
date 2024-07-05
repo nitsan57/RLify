@@ -4,6 +4,7 @@ import numpy as np
 from rlify.agents.agent_utils import ObsShapeWraper
 from rlify.agents.dqn_agent import DQN_Agent
 import adabelief_pytorch
+from rlify.agents.vdqn_agent import DQNData
 from rlify.models.base_model import BaseModel
 from rlify.utils import HiddenPrints
 import copy
@@ -251,26 +252,42 @@ class DDPG_Agent(DQN_Agent):
         )
         return actions
 
-    def update_policy(self, *exp):
+    def update_policy(self, trajectory_data: DQNData):
         """
         Updates the policy, using the DDPG algorithm.
         """
-        states, actions, rewards, dones, truncated, next_states, returns = exp
-        all_samples_len = len(states)
-        b_size = len(states) if self.Q_model.is_rnn else self.batch_size
-        for e in range(self.num_epochs_per_update):
-            terminated = dones * (1 - truncated)
-            for b in range(0, all_samples_len, b_size):
-                batched_states = states[b : b + b_size]
-                batched_actions = actions[b : b + b_size]
-                batched_next_states = next_states[b : b + b_size]
-                batched_rewards = rewards[b : b + b_size]
-                batched_dones = dones[b : b + b_size]
-                batched_terminated = terminated[b : b + b_size]
-                batched_returns = returns[b : b + b_size]
-                not_terminated = 1 - batched_terminated
+        shuffle = False if (self.Q_model.is_rnn) else True
+        dataloader = trajectory_data.get_dataloader(
+            self.batch_size, shuffle=shuffle, num_workers=self.dataloader_workers
+        )
+        for g in range(self.num_epochs_per_update):
+            for b, mb in enumerate(dataloader):
+                (
+                    batched_states,
+                    batched_actions,
+                    batched_rewards,
+                    batched_returns,
+                    batched_dones,
+                    batched_truncated,
+                    batched_next_states,
+                    batched_loss_flags,
+                ) = mb
+                batched_next_states = batched_next_states.to(
+                    self.device, non_blocking=True
+                )
+                batched_not_terminated = 1 - batched_dones * (1 - batched_truncated)
+                batched_not_terminated = batched_not_terminated.to(
+                    self.device, non_blocking=True
+                )
+                batched_returns = batched_returns.to(self.device, non_blocking=True)
+                batched_rewards = batched_rewards.to(self.device, non_blocking=True)
+                batched_actions = batched_actions.to(
+                    self.device, non_blocking=True
+                ).squeeze()
+                batched_states = batched_states.to(self.device)
+                batched_dones = batched_dones.to(self.device)
                 real_batch_size = batched_states.len
-
+                breakpoint()
                 q_values = self.get_actor_action_value(
                     batched_states, batched_dones, batched_actions, use_target=False
                 )
@@ -289,15 +306,15 @@ class DDPG_Agent(DQN_Agent):
                     )
                 expected_next_values = (
                     batched_rewards
-                    + (not_terminated * self.discount_factor) * q_next.detach()
+                    + (batched_not_terminated * self.discount_factor) * q_next.detach()
                 )
                 expected_next_values = torch.max(expected_next_values, batched_returns)
                 loss = (
                     self.criterion(q_values, expected_next_values)
                     + self.dqn_reg * q_values.pow(2).mean()
                 )
-
-                batched_states = states[b : b + b_size]
+                breakpoint()
+                batched_states = batched_states
                 actor_action = self.actor_action(
                     batched_states, batched_dones, real_batch_size, use_target=False
                 )
