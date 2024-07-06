@@ -100,6 +100,15 @@ class RL_Agent(ABC):
 
         self.metrics = TrainMetrics()
 
+    def get_train_batch_size(self):
+        """
+        Returns batch_size on normal NN
+        Returns ceil(batch_size / num_parallel_envs) on RNN
+        """
+        if self.contains_reccurent_nn():
+            return self.rnn_batch_size
+        return self.batch_size
+
     def contains_reccurent_nn(self):
         return self.rnn_models
 
@@ -446,6 +455,7 @@ class RL_Agent(ABC):
             self.num_parallel_envs <= self.batch_size
         ), f"please provide batch_size>= num_parallel_envs current: {self.batch_size}, {num_parallel_envs},"
         self.num_parallel_envs = num_parallel_envs
+        self.rnn_batch_size = int(np.ceil(self.batch_size / num_parallel_envs))
 
     @abstractmethod
     def act(self, observations: np.array, num_obs: int = 1) -> np.array:

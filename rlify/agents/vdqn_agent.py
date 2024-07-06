@@ -269,7 +269,7 @@ class VDQN_Agent(RL_Agent):
     def update_policy(self, trajectory_data: DQNData):
         shuffle = False if (self.Q_model.is_rnn) else True
         dataloader = trajectory_data.get_dataloader(
-            self.batch_size, shuffle=shuffle, num_workers=self.dataloader_workers
+            self.get_train_batch_size(), shuffle=shuffle, num_workers=self.dataloader_workers
         )
         for g in range(self.num_epochs_per_update):
             for b, mb in enumerate(dataloader):

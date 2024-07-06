@@ -210,10 +210,11 @@ class DDPG_Agent(DQN_Agent):
             action_pred = self.target_Q_mle_model(states, dones)
         else:
             action_pred = self.Q_mle_model(states, dones)
+        action_pred_shape = action_pred.shape
         all_actions = (
-            torch.tanh(action_pred) * cont_transform_coeff + cont_transform_bias
+            torch.tanh(action_pred).flatten(1,) * cont_transform_coeff + cont_transform_bias
         )
-        return all_actions
+        return all_actions.reshape(action_pred_shape)
 
     def get_actor_action_value(
         self,
@@ -258,7 +259,7 @@ class DDPG_Agent(DQN_Agent):
         """
         shuffle = False if (self.Q_model.is_rnn) else True
         dataloader = trajectory_data.get_dataloader(
-            self.batch_size, shuffle=shuffle, num_workers=self.dataloader_workers
+            self.get_train_batch_size(), shuffle=shuffle, num_workers=self.dataloader_workers
         )
         for g in range(self.num_epochs_per_update):
             for b, mb in enumerate(dataloader):
@@ -275,19 +276,17 @@ class DDPG_Agent(DQN_Agent):
                 batched_next_states = batched_next_states.to(
                     self.device, non_blocking=True
                 )
-                batched_not_terminated = 1 - batched_dones * (1 - batched_truncated)
-                batched_not_terminated = batched_not_terminated.to(
+                batched_states = batched_states.to(self.device, non_blocking=True)
+                batched_not_terminated = (1 - (batched_dones * (1 - batched_truncated))).to(
                     self.device, non_blocking=True
                 )
                 batched_returns = batched_returns.to(self.device, non_blocking=True)
                 batched_rewards = batched_rewards.to(self.device, non_blocking=True)
                 batched_actions = batched_actions.to(
                     self.device, non_blocking=True
-                ).squeeze()
-                batched_states = batched_states.to(self.device)
+                )
                 batched_dones = batched_dones.to(self.device)
                 real_batch_size = batched_states.len
-                breakpoint()
                 q_values = self.get_actor_action_value(
                     batched_states, batched_dones, batched_actions, use_target=False
                 )
@@ -309,19 +308,19 @@ class DDPG_Agent(DQN_Agent):
                     + (batched_not_terminated * self.discount_factor) * q_next.detach()
                 )
                 expected_next_values = torch.max(expected_next_values, batched_returns)
+                if torch.sum(batched_loss_flags == 0) > 0:
+                    breakpoint()
                 loss = (
-                    self.criterion(q_values, expected_next_values)
+                    self.criterion(q_values[batched_loss_flags], expected_next_values[batched_loss_flags])
                     + self.dqn_reg * q_values.pow(2).mean()
                 )
-                breakpoint()
-                batched_states = batched_states
                 actor_action = self.actor_action(
                     batched_states, batched_dones, real_batch_size, use_target=False
                 )
                 actor_values = self.get_actor_action_value(
                     batched_states, batched_dones, actor_action, use_target=False
                 )
-                actor_loss = -(actor_values.mean())
+                actor_loss = -(actor_values[batched_loss_flags].mean())
                 self.q_mle_optimizer.zero_grad(set_to_none=True)
                 actor_loss.backward()  # simple maximisze of actor reward (without changing Q function)
                 self.q_mle_optimizer.step()

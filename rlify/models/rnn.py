@@ -122,34 +122,28 @@ class GRU(ReccurentLayer):
         self.out_layer = nn.Linear(hidden_dim, np.prod(self.out_shape))
 
     def forward(self, x: torch.nn.utils.rnn.PackedSequence, dones: torch.Tensor):
-        # x, rev_indices = pack_from_done_indices(x, dones)
-        # temp_k = list(x.keys())[0]
-        # device = x[temp_k].data.device
-
         concat_tensor = []
 
-        for k in x:
+        for k in self.l1.keys():
             self.l1[k].flatten_parameters()
-            breakpoint()
             out, h = self.l1[k](x[k], self.hidden_state[k])
             self.hidden_state[k] = h.detach()
-            padded_output, output_lens = torch.nn.utils.rnn.pad_packed_sequence(
-                out, batch_first=True
-            )
-            padded_output = padded_output[rev_indices]
-            output_lens = output_lens[rev_indices]
-            all_outs_len = torch.sum(output_lens)
-            relevant_flatten_out = torch.zeros(
-                (all_outs_len, *padded_output.shape[2:]), device=device
-            )
-            last_idx = 0
-            for i, out_len in enumerate(output_lens):
-                curr_idx = last_idx + out_len
-                relevant_flatten_out[last_idx:curr_idx] = padded_output[i][:out_len]
-                last_idx = curr_idx
-
-            concat_tensor.append(relevant_flatten_out)
-        concat_tensor = torch.cat(concat_tensor, 1)
+            # padded_output, output_lens = torch.nn.utils.rnn.pad_packed_sequence(
+            #     out, batch_first=True
+            # )
+            # padded_output = padded_output[rev_indices]
+            # output_lens = output_lens[rev_indices]
+            # all_outs_len = torch.sum(output_lens)
+            # relevant_flatten_out = torch.zeros(
+            #     (all_outs_len, *padded_output.shape[2:]), device=device
+            # )
+            # last_idx = 0
+            # for i, out_len in enumerate(output_lens):
+            #     curr_idx = last_idx + out_len
+            #     relevant_flatten_out[last_idx:curr_idx] = padded_output[i][:out_len]
+            #     last_idx = curr_idx
+            concat_tensor.append(out)
+        concat_tensor = torch.cat(concat_tensor, -1)
         out = self.concat_layer(concat_tensor)
         out = self.out_layer(out)
         return out

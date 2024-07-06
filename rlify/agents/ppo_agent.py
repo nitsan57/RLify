@@ -289,7 +289,7 @@ class PPO_Agent(RL_Agent):
             prepare_for_rnn=self.contains_reccurent_nn(),
         )
         dl = data.get_dataloader(
-            self.batch_size, shuffle=False, num_workers=self.dataloader_workers
+            self.get_train_batch_size(), shuffle=False, num_workers=self.dataloader_workers
         )
 
         values = []
@@ -364,7 +364,7 @@ class PPO_Agent(RL_Agent):
 
         shuffle = False if (self.policy_nn.is_rnn) else True
         ppo_dataloader = trajectory_data.get_dataloader(
-            self.batch_size, shuffle=shuffle, num_workers=self.dataloader_workers
+            self.get_train_batch_size(), shuffle=shuffle, num_workers=self.dataloader_workers
         )
         for e in range(self.num_epochs_per_update):
             kl_div_bool = False

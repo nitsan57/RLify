@@ -53,7 +53,7 @@ def pad_tensors_from_done_indices(data, dones):
     padded_seq_batch = torch.nn.utils.rnn.pad_sequence(temp, batch_first=True)
     padded_obs = padded_seq_batch
     lengths = done_indices - np.roll(done_indices, 1)
-    lengths[0] = done_indices[0]
+    lengths[0] = done_indices[0] + 1
     return padded_obs, lengths
 
 
@@ -636,19 +636,18 @@ class IData(ABC):
         Returns:
             A DataLoader object
         """
-        if not (shuffle == self.can_shuffle or shuffle == False):
+        if (not self.can_shuffle and shuffle == True):
             logging.warning(
                 "Shuffle is not allowed when preparing data for RNN, changing shuffle to False"
             )
             shuffle = False
-
+            
         return DataLoader(
             self.dataset,
             batch_size=batch_size,
             shuffle=shuffle,
             num_workers=num_workers,
             pin_memory=True,
-            drop_last=False,
             collate_fn=self.dataset.collate_fn,
         )
 
@@ -679,23 +678,23 @@ class LambdaDataset(Dataset):
         self.obsWrapper_obs_collection = obsWrapper_obs_collection
         self.tensor_collection = tensor_collection
         self.dones = dones
-        self.loss_flag = torch.ones_like(dones)
+        self.loss_flag = torch.ones_like(dones).bool()
         self.prepare_for_rnn = prepare_for_rnn
-        self.max_len = len(dones)
+        self.num_items = len(dones)
         if self.prepare_for_rnn:
             (
                 self.obsWrapper_obs_collection,
                 self.tensor_collection,
+                self.dones,
                 self.loss_flag,
                 lengths,
             ) = self._pad_experiecne(
                 self.obsWrapper_obs_collection, self.tensor_collection, dones
             )
-            breakpoint()
-            self.max_len = lengths.max()
+            self.num_items = lengths.max() # 16 games , 200 sequential history, *obs_shape
 
     def __len__(self):
-        return self.max_len
+        return self.num_items
 
     def _prepare_data(self, obsWrapper_obs_collection, tensor_collection, dones):
         """
@@ -728,7 +727,7 @@ class LambdaDataset(Dataset):
         Returns:
             The padded experience and loss flag
         """
-        breakpoint()
+
         obsWrapper_obs_collection = [
             pad_states_from_done_indices(obs, dones)[0]
             for obs in obsWrapper_obs_collection
@@ -737,25 +736,35 @@ class LambdaDataset(Dataset):
             pad_tensors_from_done_indices(tensor, dones)[0]
             for tensor in tensor_collection
         ]
-        dones, lengths = pad_from_done_indices(dones, dones)
         loss_flag, lengths = pad_tensors_from_done_indices(
             torch.ones_like(dones), dones
         )
+        loss_flag = loss_flag.bool()
+        dones, lengths = pad_tensors_from_done_indices(dones, dones)
         return (
             obsWrapper_obs_collection,
             tensor_collection,
+            dones,
             loss_flag,
             lengths,
         )
 
     def __getitems__(self, idx):
-        obsWrapper_obs_collection = [obs[idx] for obs in self.obsWrapper_obs_collection]
-        tensor_collection = [tensor[idx] for tensor in self.tensor_collection]
+        if self.prepare_for_rnn:
+            obsWrapper_obs_collection = [obs[:, idx] for obs in self.obsWrapper_obs_collection]
+            tensor_collection = [tensor[:, idx] for tensor in self.tensor_collection]
+            dones = self.dones[:, idx]
+            loss_flag = self.loss_flag[:, idx]
+        else:
+            obsWrapper_obs_collection = [obs[idx] for obs in self.obsWrapper_obs_collection]
+            tensor_collection = [tensor[idx] for tensor in self.tensor_collection]
+            dones = self.dones[idx]
+            loss_flag = self.loss_flag[idx]
         return (
             obsWrapper_obs_collection,
             tensor_collection,
-            self.dones[idx],
-            self.loss_flag[idx],
+            dones,
+            loss_flag,
         )
 
     def __getitem__(self, idx):
