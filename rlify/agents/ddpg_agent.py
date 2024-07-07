@@ -187,7 +187,6 @@ class DDPG_Agent(DQN_Agent):
     def actor_action(
         self,
         observations: torch.tensor,
-        dones: torch.tensor,
         num_obs: int = 1,
         use_target: bool = False,
     ):
@@ -196,7 +195,6 @@ class DDPG_Agent(DQN_Agent):
 
         Args:
             observations (np.ndarray, torch.tensor): The observations to act on
-            dones (np.ndarray, torch.tensor): The dones of the observations
             num_obs (int, optional): The number of observations to act on. Defaults to 1.
 
         Returns:
@@ -207,19 +205,22 @@ class DDPG_Agent(DQN_Agent):
         cont_transform_coeff = self.cont_transform_coeff.expand(num_obs, self.n_actions)
         cont_transform_bias = self.cont_transform_bias.expand(num_obs, self.n_actions)
         if use_target:
-            action_pred = self.target_Q_mle_model(states, dones)
+            action_pred = self.target_Q_mle_model(states)
         else:
-            action_pred = self.Q_mle_model(states, dones)
+            action_pred = self.Q_mle_model(states)
         action_pred_shape = action_pred.shape
         all_actions = (
-            torch.tanh(action_pred).flatten(1,) * cont_transform_coeff + cont_transform_bias
+            torch.tanh(action_pred).flatten(
+                1,
+            )
+            * cont_transform_coeff
+            + cont_transform_bias
         )
         return all_actions.reshape(action_pred_shape)
 
     def get_actor_action_value(
         self,
         states: torch.tensor,
-        dones: torch.tensor,
         actions: torch.tensor,
         use_target: bool = False,
     ):
@@ -236,9 +237,9 @@ class DDPG_Agent(DQN_Agent):
         """
         states["action"] = actions
         if use_target:
-            actions_values = self.target_Q_model(states, dones).squeeze(-1)
+            actions_values = self.target_Q_model(states).squeeze(-1)
         else:
-            actions_values = self.Q_model(states, dones).squeeze(-1)
+            actions_values = self.Q_model(states).squeeze(-1)
         return actions_values
 
     def act(self, observations: np.array, num_obs: int = 1):
@@ -259,7 +260,9 @@ class DDPG_Agent(DQN_Agent):
         """
         shuffle = False if (self.Q_model.is_rnn) else True
         dataloader = trajectory_data.get_dataloader(
-            self.get_train_batch_size(), shuffle=shuffle, num_workers=self.dataloader_workers
+            self.get_train_batch_size(),
+            shuffle=shuffle,
+            num_workers=self.dataloader_workers,
         )
         for g in range(self.num_epochs_per_update):
             for b, mb in enumerate(dataloader):
@@ -277,18 +280,16 @@ class DDPG_Agent(DQN_Agent):
                     self.device, non_blocking=True
                 )
                 batched_states = batched_states.to(self.device, non_blocking=True)
-                batched_not_terminated = (1 - (batched_dones * (1 - batched_truncated))).to(
-                    self.device, non_blocking=True
-                )
+                batched_not_terminated = (
+                    1 - (batched_dones * (1 - batched_truncated))
+                ).to(self.device, non_blocking=True)
                 batched_returns = batched_returns.to(self.device, non_blocking=True)
                 batched_rewards = batched_rewards.to(self.device, non_blocking=True)
-                batched_actions = batched_actions.to(
-                    self.device, non_blocking=True
-                )
+                batched_actions = batched_actions.to(self.device, non_blocking=True)
                 batched_dones = batched_dones.to(self.device)
                 real_batch_size = batched_states.len
                 q_values = self.get_actor_action_value(
-                    batched_states, batched_dones, batched_actions, use_target=False
+                    batched_states, batched_actions, use_target=False
                 )
                 with torch.no_grad():
                     actor_next_action = self.actor_action(
@@ -299,7 +300,6 @@ class DDPG_Agent(DQN_Agent):
                     )
                     q_next = self.get_actor_action_value(
                         batched_next_states,
-                        batched_dones,
                         actor_next_action,
                         use_target=True,
                     )
@@ -311,14 +311,17 @@ class DDPG_Agent(DQN_Agent):
                 if torch.sum(batched_loss_flags == 0) > 0:
                     breakpoint()
                 loss = (
-                    self.criterion(q_values[batched_loss_flags], expected_next_values[batched_loss_flags])
+                    self.criterion(
+                        q_values[batched_loss_flags],
+                        expected_next_values[batched_loss_flags],
+                    )
                     + self.dqn_reg * q_values.pow(2).mean()
                 )
                 actor_action = self.actor_action(
-                    batched_states, batched_dones, real_batch_size, use_target=False
+                    batched_states, real_batch_size, use_target=False
                 )
                 actor_values = self.get_actor_action_value(
-                    batched_states, batched_dones, actor_action, use_target=False
+                    batched_states, actor_action, use_target=False
                 )
                 actor_loss = -(actor_values[batched_loss_flags].mean())
                 self.q_mle_optimizer.zero_grad(set_to_none=True)

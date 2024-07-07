@@ -69,15 +69,14 @@ class ReccurentLayer(BaseModel):
     def __init__(self, input_shape, out_shape):
         super().__init__(input_shape, out_shape)
 
-    def forward(self, x, dones):
+    def forward(self, x):
         """
         Forward pass of the model
 
         Args:
             x: PackedSequence: the input data
-            dones: torch.Tensor: the done indices
         """
-        super().forward(x, dones)
+        super().forward(x)
 
     def reset(self):
         raise NotImplementedError()
@@ -121,7 +120,7 @@ class GRU(ReccurentLayer):
         )
         self.out_layer = nn.Linear(hidden_dim, np.prod(self.out_shape))
 
-    def forward(self, x: torch.nn.utils.rnn.PackedSequence, dones: torch.Tensor):
+    def forward(self, x: torch.nn.utils.rnn.PackedSequence):
         concat_tensor = []
 
         for k in self.l1.keys():

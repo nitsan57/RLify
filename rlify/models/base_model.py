@@ -33,7 +33,7 @@ class BaseModel(torch.nn.Module, ABC):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     @abstractmethod
-    def forward(self, x, dones=None):
+    def forward(self, x):
         """
         Forward pass of the model
         """

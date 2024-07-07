@@ -48,7 +48,7 @@ class FC(BaseModel):
         )
         self.out_layer = nn.Linear(embed_dim, np.prod(self.out_shape))
 
-    def forward(self, x, d=None):  # d is for rnn api compability
+    def forward(self, x):  # d is for rnn api compability
 
         res_dict = dict()
         for k in x:

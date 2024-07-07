@@ -269,7 +269,9 @@ class VDQN_Agent(RL_Agent):
     def update_policy(self, trajectory_data: DQNData):
         shuffle = False if (self.Q_model.is_rnn) else True
         dataloader = trajectory_data.get_dataloader(
-            self.get_train_batch_size(), shuffle=shuffle, num_workers=self.dataloader_workers
+            self.get_train_batch_size(),
+            shuffle=shuffle,
+            num_workers=self.dataloader_workers,
         )
         for g in range(self.num_epochs_per_update):
             for b, mb in enumerate(dataloader):
@@ -297,24 +299,31 @@ class VDQN_Agent(RL_Agent):
                 ).squeeze()
                 batched_states = batched_states.to(self.device)
                 batched_dones = batched_dones.to(self.device)
-                breakpoint()
-                v_table = self.Q_model(batched_states, batched_dones)
-
-                # only because last batch is smaller
-                real_batch_size = batched_states.len
-                q_values = v_table[np.arange(real_batch_size), batched_actions.long()]
+                v_table = self.Q_model(batched_states)
+                q_values = v_table[
+                    np.arange(len(v_table)), batched_actions.long().flatten(0, -1)
+                ]
+                q_values = q_values.reshape_as(batched_actions)
                 with torch.no_grad():
                     q_next = (
-                        self.Q_model(batched_next_states, batched_dones)
+                        self.target_Q_model(batched_next_states)
                         .detach()
+                        .flatten(0, -2)
                         .max(1)[0]
                     )
+                    q_next = q_next.reshape_as(batched_actions)
                 expected_next_values = (
                     batched_rewards
                     + batched_not_terminated * self.discount_factor * q_next.detach()
                 )
                 expected_next_values = torch.max(expected_next_values, batched_returns)
-                loss = self.criterion(q_values, expected_next_values)
+                loss = (
+                    self.criterion(
+                        q_values[batched_loss_flags],
+                        expected_next_values[batched_loss_flags],
+                    )
+                    + self.dqn_reg * q_values.pow(2).mean()
+                )
                 self.optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 self.optimizer.step()
