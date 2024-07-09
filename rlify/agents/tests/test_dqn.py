@@ -58,7 +58,7 @@ def test_single(env_name, num_parallel_envs, is_rnn):
         Q_model=Q_model,
         discount_factor=0.99,
         explorer=RandomExplorer(1, 0.05, 0.01),
-        num_epochs_per_update=20,
+        num_epochs_per_update=5,
         tensorboard_dir="/tmp/vdqn_test",
         target_update="hard[update_freq=10]",
     )
@@ -75,7 +75,7 @@ def test_single(env_name, num_parallel_envs, is_rnn):
         Q_model=Q_model,
         discount_factor=0.99,
         explorer=RandomExplorer(0.5, 0.05, 0.01),
-        num_epochs_per_update=20,
+        num_epochs_per_update=5,
         tensorboard_dir="/tmp/dqn/dqn_test_tensorboard",
         target_update="soft[tau=0.01]",
     )
@@ -87,7 +87,7 @@ def test_single(env_name, num_parallel_envs, is_rnn):
 
 
 def main():
-    test_single("Taxi-v3", 4, False)
+    test_single("CartPole-v1", 1, True)
 
 
 if __name__ == "__main__":

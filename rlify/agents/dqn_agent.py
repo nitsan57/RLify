@@ -188,6 +188,7 @@ class DQN_Agent(VDQN_Agent):
                     + (1 - batched_terminated) * self.discount_factor * q_next
                 )
                 expected_next_values = torch.max(expected_next_values, batched_returns)
+                expected_next_values = expected_next_values.reshape_as(q_values)
                 loss = (
                     self.criterion(
                         q_values[batched_loss_flags],

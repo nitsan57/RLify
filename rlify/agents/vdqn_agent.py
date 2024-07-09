@@ -212,7 +212,7 @@ class VDQN_Agent(RL_Agent):
         """
         states = self.pre_process_obs_for_act(observations, num_obs)
         with torch.no_grad():
-            all_actions_values = self.Q_model(states, torch.ones((num_obs, 1)))
+            all_actions_values = self.Q_model(states)
             all_actions_values = torch.squeeze(all_actions_values, 1)
 
         return all_actions_values
@@ -317,6 +317,7 @@ class VDQN_Agent(RL_Agent):
                     + batched_not_terminated * self.discount_factor * q_next.detach()
                 )
                 expected_next_values = torch.max(expected_next_values, batched_returns)
+                expected_next_values = expected_next_values.reshape_as(q_values)
                 loss = (
                     self.criterion(
                         q_values[batched_loss_flags],

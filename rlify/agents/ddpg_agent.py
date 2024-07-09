@@ -245,7 +245,7 @@ class DDPG_Agent(DQN_Agent):
     def act(self, observations: np.array, num_obs: int = 1):
         with torch.no_grad():
             actor_acts = self.actor_action(
-                observations, torch.ones((num_obs, 1)), num_obs
+                observations, num_obs
             )
             if self.possible_actions != "continuous":
                 actor_acts = actor_acts.round()
@@ -294,7 +294,6 @@ class DDPG_Agent(DQN_Agent):
                 with torch.no_grad():
                     actor_next_action = self.actor_action(
                         batched_next_states,
-                        batched_dones,
                         real_batch_size,
                         use_target=True,
                     )
@@ -308,8 +307,6 @@ class DDPG_Agent(DQN_Agent):
                     + (batched_not_terminated * self.discount_factor) * q_next.detach()
                 )
                 expected_next_values = torch.max(expected_next_values, batched_returns)
-                if torch.sum(batched_loss_flags == 0) > 0:
-                    breakpoint()
                 loss = (
                     self.criterion(
                         q_values[batched_loss_flags],

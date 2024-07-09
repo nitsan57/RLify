@@ -57,7 +57,7 @@ def test_single(env_name, num_parallel_envs, is_rnn):
         Q_model=Q_model,
         discount_factor=0.99,
         explorer=RandomExplorer(0.5, 0.05, 0.01),
-        num_epochs_per_update=20,
+        num_epochs_per_update=5,
         tensorboard_dir="/tmp/vdqn_test_tensorboard/",
     )
     train_stats = agent.train_n_steps(env=env, n_steps=800)

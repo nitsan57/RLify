@@ -189,15 +189,15 @@ class PPO_Agent(RL_Agent):
         self.policy_nn = self.policy_nn.to(self.device)
         self.critic_nn = self.critic_nn.to(self.device)
         if np.issubdtype(self.action_dtype, np.integer):
-            self.actor_model = lambda x, d=torch.ones((1, 1)): MDA(
+            self.actor_model = lambda x: MDA(
                 self.action_space.start,
                 self.possible_actions,
                 self.n_actions,
-                self.policy_nn(x, d),
+                self.policy_nn(x),
             )
         else:
-            self.actor_model = lambda x, d=torch.ones((1, 1)): MCAW(
-                self.action_space.low, self.action_space.high, self.policy_nn(x, d)
+            self.actor_model = lambda x: MCAW(
+                self.action_space.low, self.action_space.high, self.policy_nn(x)
             )
 
         weight = list(self.policy_nn.children())[-1].weight.data
@@ -252,7 +252,7 @@ class PPO_Agent(RL_Agent):
         states = self.pre_process_obs_for_act(observations, num_obs)
 
         with torch.no_grad():
-            actions_dist = self.actor_model(states, torch.ones((num_obs, 1)))
+            actions_dist = self.actor_model(states)
         selected_actions = torch.argmax(actions_dist.probs, 1).detach().cpu().numpy()
         return self.return_correct_actions_dim(selected_actions, num_obs)
 
@@ -260,7 +260,7 @@ class PPO_Agent(RL_Agent):
         states = self.pre_process_obs_for_act(observations, num_obs)
 
         with torch.no_grad():
-            actions_dist = self.actor_model(states, torch.ones((num_obs, 1)))
+            actions_dist = self.actor_model(states)
 
         selected_actions = actions_dist.loc.detach().cpu().numpy()
         return self.return_correct_actions_dim(selected_actions, num_obs)
@@ -270,8 +270,7 @@ class PPO_Agent(RL_Agent):
 
         with torch.no_grad():
             actions_dist = self.actor_model(
-                states, torch.ones((num_obs, 1), device=self.device)
-            )
+                states, device=self.device)
             action = actions_dist.sample()
 
         selected_actions = action.detach().cpu().numpy()
@@ -386,7 +385,6 @@ class PPO_Agent(RL_Agent):
                 batched_actions = batched_actions.to(self.device, non_blocking=True)
                 batch_states = batch_states.to(self.device)
                 batched_dones = batched_dones.to(self.device)
-                breakpoint()
                 dist = self.actor_model(batch_states, batched_dones)
                 critic_values = self.critic_nn(batch_states, batched_dones)
                 new_log_probs = dist.log_prob(batched_actions)

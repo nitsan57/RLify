@@ -708,7 +708,6 @@ class LambdaDataset(Dataset):
             The prepared data
 
         """
-
         obsWrapper_obs_collection = [
             obs.get_as_tensors("cpu") for obs in obsWrapper_obs_collection
         ]
@@ -754,12 +753,13 @@ class LambdaDataset(Dataset):
             obsWrapper_obs_collection = [obs[:, idx] for obs in self.obsWrapper_obs_collection]
             tensor_collection = [tensor[:, idx] for tensor in self.tensor_collection]
             dones = self.dones[:, idx]
-            loss_flag = self.loss_flag[:, idx]
+            loss_flag = self.loss_flag[:, idx].squeeze(0)
         else:
             obsWrapper_obs_collection = [obs[idx] for obs in self.obsWrapper_obs_collection]
             tensor_collection = [tensor[idx] for tensor in self.tensor_collection]
             dones = self.dones[idx]
-            loss_flag = self.loss_flag[idx]
+            loss_flag = self.loss_flag[idx].squeeze(0)
+
         return (
             obsWrapper_obs_collection,
             tensor_collection,
