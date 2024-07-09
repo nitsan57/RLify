@@ -28,7 +28,6 @@ class PPODataset(Dataset):
     ):
         obs_collection = (states,)
         tensor_collection = actions, returns, advantages, logits
-
         self.x_dataset = LambdaDataset(
             obs_collection,
             tensor_collection=tensor_collection,
@@ -41,10 +40,10 @@ class PPODataset(Dataset):
         return len(self.x_dataset)
 
     def __getitems__(self, idx):
-        obsWrapper_obs_collection, tensor_collection, dones, loss_flag = (
+        obs_collection, tensor_collection, dones, loss_flag = (
             self.x_dataset.__getitems__(idx)
         )
-        states = obsWrapper_obs_collection[0]
+        states = obs_collection[0]
         actions, returns, advantages, logits = tensor_collection
         return (
             states,
@@ -193,11 +192,13 @@ class PPO_Agent(RL_Agent):
                 self.action_space.start,
                 self.possible_actions,
                 self.n_actions,
-                self.policy_nn(x),
+                self.policy_nn(x).flatten(0, -2),
             )
         else:
             self.actor_model = lambda x: MCAW(
-                self.action_space.low, self.action_space.high, self.policy_nn(x)
+                self.action_space.low,
+                self.action_space.high,
+                self.policy_nn(x).flatten(0, -2),
             )
 
         weight = list(self.policy_nn.children())[-1].weight.data
@@ -269,8 +270,7 @@ class PPO_Agent(RL_Agent):
         states = self.pre_process_obs_for_act(observations, num_obs)
 
         with torch.no_grad():
-            actions_dist = self.actor_model(
-                states, device=self.device)
+            actions_dist = self.actor_model(states)
             action = actions_dist.sample()
 
         selected_actions = action.detach().cpu().numpy()
@@ -282,43 +282,91 @@ class PPO_Agent(RL_Agent):
 
     def calc_logits_values(self, states, actions, dones):
         data = LambdaData(
-            obsWrapper_obs_collection=(states,),
+            obs_collection=(states,),
             tensor_collection=(actions,),
             dones=dones,
             prepare_for_rnn=self.contains_reccurent_nn(),
         )
         dl = data.get_dataloader(
-            self.get_train_batch_size(), shuffle=False, num_workers=self.dataloader_workers
+            self.get_train_batch_size(),
+            shuffle=False,
+            num_workers=self.dataloader_workers,
         )
 
         values = []
         logits = []
+        training = self.training
         self.set_eval_mode()
         with torch.no_grad():
             for mb in dl:
                 (
-                    obsWrapper_obs_collection,
+                    obs_collection,
                     tensor_collection,
                     batched_dones,
                     batched_loss_flags,
                 ) = mb
-                batched_states = obsWrapper_obs_collection[0]
+                batched_states = obs_collection[0]
                 batched_actions = tensor_collection[0]
                 batched_actions = batched_actions.to(self.device, non_blocking=True)
                 batched_states = batched_states.to(self.device)
-                values.append(
-                    self.critic_nn(batched_states, batched_dones.to(self.device))
-                    .squeeze()
-                    .to("cpu")
+                logit = (
+                    self.actor_model(batched_states)
+                    .log_prob(batched_actions.flatten(0, -2))
+                    .flatten(0, -2)[batched_loss_flags.flatten()]
                 )
-                logit = self.actor_model(
-                    batched_states, batched_dones.to(self.device)
-                ).log_prob(batched_actions)
                 logits.append(logit.to("cpu"))
+                values.append(
+                    self.critic_nn(batched_states)
+                    .squeeze()
+                    .to("cpu")[batched_loss_flags]
+                )
+
+        if training:
+            self.set_train_mode()
         return (
-            torch.cat(logits).detach().cpu().numpy(),
-            torch.cat(values).detach().cpu().numpy(),
+            torch.cat(logits).flatten(0, -2).detach().cpu().numpy(),
+            torch.cat(values).flatten().detach().cpu().numpy(),
         )
+
+    # def calc_logits_values(self, states, actions, dones):
+    #     data = LambdaData(
+    #         obs_collection=(states,),
+    #         tensor_collection=(actions,),
+    #         dones=dones,
+    #         prepare_for_rnn=self.contains_reccurent_nn(),
+    #     )
+    #     dl = data.get_dataloader(
+    #         self.get_train_batch_size(),
+    #         shuffle=False,
+    #         num_workers=self.dataloader_workers,
+    #     )
+
+    #     values = []
+    #     logits = []
+    #     training = self.training
+    #     self.set_eval_mode()
+    #     with torch.no_grad():
+    #         for mb in dl:
+    #             (
+    #                 obs_collection,
+    #                 tensor_collection,
+    #                 batched_dones,
+    #                 batched_loss_flags,
+    #             ) = mb
+    #             batched_states = obs_collection[0]
+    #             batched_actions = tensor_collection[0]
+    #             batched_actions = batched_actions.to(self.device, non_blocking=True)
+    #             batched_states = batched_states.to(self.device)
+    #             logit = self.actor_model(batched_states).log_prob(batched_actions)
+    #             logits.append(logit.to("cpu"))
+    #             values.append(self.critic_nn(batched_states).squeeze().to("cpu"))
+
+    #     if training:
+    #         self.set_train_mode()
+    #     return (
+    #         torch.cat(logits).flatten().detach().cpu().numpy(),
+    #         torch.cat(values).flatten().detach().cpu().numpy(),
+    #     )
 
     def _get_ppo_experiences(self, num_episodes=None):
         """
@@ -363,7 +411,9 @@ class PPO_Agent(RL_Agent):
 
         shuffle = False if (self.policy_nn.is_rnn) else True
         ppo_dataloader = trajectory_data.get_dataloader(
-            self.get_train_batch_size(), shuffle=shuffle, num_workers=self.dataloader_workers
+            self.get_train_batch_size(),
+            shuffle=shuffle,
+            num_workers=self.dataloader_workers,
         )
         for e in range(self.num_epochs_per_update):
             kl_div_bool = False
@@ -385,16 +435,20 @@ class PPO_Agent(RL_Agent):
                 batched_actions = batched_actions.to(self.device, non_blocking=True)
                 batch_states = batch_states.to(self.device)
                 batched_dones = batched_dones.to(self.device)
-                dist = self.actor_model(batch_states, batched_dones)
-                critic_values = self.critic_nn(batch_states, batched_dones)
-                new_log_probs = dist.log_prob(batched_actions)
-
-                log_ratio = torch.clamp(new_log_probs, np.log(1e-3), 0.0) - torch.clamp(
-                    old_log_probs, np.log(1e-3), 0.0
+                dist = self.actor_model(batch_states)
+                critic_values = self.critic_nn(batch_states)
+                new_log_probs = dist.log_prob(batched_actions.flatten(0, -2))
+                # log_ratio = self.apply_function_with_loss_flag(
+                #     lambda x, y: torch.clamp(x, 1e-3, 0.0) - torch.clamp(y, 1e-3, 0.0),
+                #     new_log_probs,
+                #     old_log_probs,
+                #     batched_loss_flags,
+                # )
+                new_log_probs = new_log_probs.reshape_as(old_log_probs)
+                log_ratio = torch.clamp(new_log_probs, 1e-3, 0.0) - torch.clamp(
+                    old_log_probs, 1e-3, 0.0
                 )
                 ratio = log_ratio.exp().mean(-1)
-                log_ratio = torch.log(ratio)
-
                 surr1 = ratio * batched_advantages
                 surr2 = (
                     torch.clamp(
@@ -402,10 +456,15 @@ class PPO_Agent(RL_Agent):
                     )
                     * batched_advantages
                 )
-                entropy = dist.entropy().mean()
-                actor_loss = (
-                    -(torch.min(surr1, surr2).mean()) - self.entropy_coeff * entropy
+                entropy = dist.entropy()
+                actor_criterion = lambda x, y: -torch.min(x, y).mean()
+                actor_loss = self.apply_function_with_loss_flag(
+                    actor_criterion, surr1, surr2, batched_loss_flags
                 )
+                -self.apply_regularization(
+                    self.entropy_coeff, entropy, batched_loss_flags
+                )
+
                 kl_div = -(ratio * log_ratio - (ratio - 1)).mean().item()
 
                 if np.abs(kl_div) > self.kl_div_thresh:
@@ -422,7 +481,12 @@ class PPO_Agent(RL_Agent):
                 actor_loss.backward()
                 # nn.utils.clip_grad_norm_(self.policy_nn.parameters(), 0.5)
                 self.actor_optimizer.step()
-                critic_loss = self.criterion(critic_values, batched_returns)
+                critic_loss = self.apply_function_with_loss_flag(
+                    self.criterion,
+                    critic_values,
+                    batched_returns,
+                    batched_loss_flags,
+                )
                 self.critic_optimizer.zero_grad(set_to_none=True)
                 critic_loss.backward()
                 self.critic_optimizer.step()

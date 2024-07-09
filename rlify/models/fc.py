@@ -51,7 +51,7 @@ class FC(BaseModel):
     def forward(self, x):  # d is for rnn api compability
 
         res_dict = dict()
-        for k in x:
+        for k in self.l1.keys():
             layer_in = torch.flatten(x[k], start_dim=1)
             out = self.l1[k](layer_in)
             out = self.embed_layer[k](out)

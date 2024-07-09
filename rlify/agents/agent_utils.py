@@ -64,7 +64,6 @@ def calc_gaes(rewards, values, terminated, discount_factor=0.99, decay=0.9):
     Paper: https://arxiv.org/pdf/1506.02438.pdf
     """
     next_values = np.concatenate([values[1:], np.zeros(1)])
-
     td = rewards + discount_factor * (next_values) * (1 - terminated)
     deltas = td - values
 
@@ -636,12 +635,12 @@ class IData(ABC):
         Returns:
             A DataLoader object
         """
-        if (not self.can_shuffle and shuffle == True):
+        if not self.can_shuffle and shuffle == True:
             logging.warning(
                 "Shuffle is not allowed when preparing data for RNN, changing shuffle to False"
             )
             shuffle = False
-            
+
         return DataLoader(
             self.dataset,
             batch_size=batch_size,
@@ -659,23 +658,23 @@ class LambdaDataset(Dataset):
 
     def __init__(
         self,
-        obsWrapper_obs_collection: tuple[ObsWrapper],
+        obs_collection: tuple[ObsWrapper],
         tensor_collection: tuple[torch.tensor],
         dones: torch.tensor,
         prepare_for_rnn: bool,
     ):
         """
         Args:
-            obsWrapper_obs_collection: The observation collection
+            obs_collection: The observation collection
             tensor_collection: The tensor collection
             dones: The dones tensor
             prepare_for_rnn: Whether to prepare the data for RNN
 
         """
-        obsWrapper_obs_collection, tensor_collection, dones = self._prepare_data(
-            obsWrapper_obs_collection, tensor_collection, dones
+        obs_collection, tensor_collection, dones = self._prepare_data(
+            obs_collection, tensor_collection, dones
         )
-        self.obsWrapper_obs_collection = obsWrapper_obs_collection
+        self.obs_collection = obs_collection
         self.tensor_collection = tensor_collection
         self.dones = dones
         self.loss_flag = torch.ones_like(dones).bool()
@@ -683,24 +682,24 @@ class LambdaDataset(Dataset):
         self.num_items = len(dones)
         if self.prepare_for_rnn:
             (
-                self.obsWrapper_obs_collection,
+                self.obs_collection,
                 self.tensor_collection,
                 self.dones,
                 self.loss_flag,
                 lengths,
-            ) = self._pad_experiecne(
-                self.obsWrapper_obs_collection, self.tensor_collection, dones
-            )
-            self.num_items = lengths.max() # 16 games , 200 sequential history, *obs_shape
+            ) = self._pad_experiecne(self.obs_collection, self.tensor_collection, dones)
+            self.num_items = (
+                lengths.max()
+            )  # 16 games , 200 sequential history, *obs_shape
 
     def __len__(self):
         return self.num_items
 
-    def _prepare_data(self, obsWrapper_obs_collection, tensor_collection, dones):
+    def _prepare_data(self, obs_collection, tensor_collection, dones):
         """
         Prepares the data for the dataset in form of tensors
         Args:
-            obsWrapper_obs_collection: The observation collection
+            obs_collection: The observation collection
             tensor_collection: The tensor collection
             dones: The dones tensor
 
@@ -708,28 +707,26 @@ class LambdaDataset(Dataset):
             The prepared data
 
         """
-        obsWrapper_obs_collection = [
-            obs.get_as_tensors("cpu") for obs in obsWrapper_obs_collection
-        ]
+        obs_collection = [obs.get_as_tensors("cpu") for obs in obs_collection]
         tensor_collection = [torch.from_numpy(tensor) for tensor in tensor_collection]
         dones = torch.from_numpy(dones)
-        return obsWrapper_obs_collection, tensor_collection, dones
+        return obs_collection, tensor_collection, dones
 
-    def _pad_experiecne(self, obsWrapper_obs_collection, tensor_collection, dones):
+    def _pad_experiecne(self, obs_collection, tensor_collection, dones):
         """
         Pads the experience for RNN
         Args:
-            obsWrapper_obs_collection: The observation collection
+            obs_collection: The observation collection
             tensor_collection: The tensor collection
             dones: The dones tensor
 
         Returns:
             The padded experience and loss flag
+            loss flag is a tensor of ones where the data are not padded
         """
 
-        obsWrapper_obs_collection = [
-            pad_states_from_done_indices(obs, dones)[0]
-            for obs in obsWrapper_obs_collection
+        obs_collection = [
+            pad_states_from_done_indices(obs, dones)[0] for obs in obs_collection
         ]
         tensor_collection = [
             pad_tensors_from_done_indices(tensor, dones)[0]
@@ -741,7 +738,7 @@ class LambdaDataset(Dataset):
         loss_flag = loss_flag.bool()
         dones, lengths = pad_tensors_from_done_indices(dones, dones)
         return (
-            obsWrapper_obs_collection,
+            obs_collection,
             tensor_collection,
             dones,
             loss_flag,
@@ -750,18 +747,18 @@ class LambdaDataset(Dataset):
 
     def __getitems__(self, idx):
         if self.prepare_for_rnn:
-            obsWrapper_obs_collection = [obs[:, idx] for obs in self.obsWrapper_obs_collection]
+            obs_collection = [obs[:, idx] for obs in self.obs_collection]
             tensor_collection = [tensor[:, idx] for tensor in self.tensor_collection]
             dones = self.dones[:, idx]
             loss_flag = self.loss_flag[:, idx].squeeze(0)
         else:
-            obsWrapper_obs_collection = [obs[idx] for obs in self.obsWrapper_obs_collection]
+            obs_collection = [obs[idx] for obs in self.obs_collection]
             tensor_collection = [tensor[idx] for tensor in self.tensor_collection]
             dones = self.dones[idx]
             loss_flag = self.loss_flag[idx].squeeze(0)
 
         return (
-            obsWrapper_obs_collection,
+            obs_collection,
             tensor_collection,
             dones,
             loss_flag,
@@ -777,13 +774,13 @@ class LambdaDataset(Dataset):
 class LambdaData(IData):
     def __init__(
         self,
-        obsWrapper_obs_collection: tuple[ObsWrapper],
+        obs_collection: tuple[ObsWrapper],
         tensor_collection: tuple[torch.tensor],
         dones: torch.tensor,
         prepare_for_rnn: bool,
     ) -> None:
         dataset = LambdaDataset(
-            obsWrapper_obs_collection, tensor_collection, dones, prepare_for_rnn
+            obs_collection, tensor_collection, dones, prepare_for_rnn
         )
         super().__init__(dataset, prepare_for_rnn)
 

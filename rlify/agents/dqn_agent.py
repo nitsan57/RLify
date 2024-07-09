@@ -22,7 +22,7 @@ class DQN_Agent(VDQN_Agent):
             Q_model = fc.FC(input_shape=Q_input_shape, out_shape=Q_out_shape)
             agent = DQN_Agent(obs_space=env.observation_space, action_space=env.action_space, batch_size=64, max_mem_size=10**5, num_parallel_envs=16,
                                 lr=3e-4, Q_model=Q_model, discount_factor=0.99, target_update='hard[update_freq=10]', tensorboard_dir = None, num_epochs_per_update=2)
-            train_stats = agent.train_n_steps(env=env,n_steps=80000)
+            train_stats = agent.train_n_steps(env=env,n_steps=40000)
 
         Args:
             target_update (str): 'soft[tau=0.01]' or 'hard[update_freq=10]' target update
@@ -189,12 +189,13 @@ class DQN_Agent(VDQN_Agent):
                 )
                 expected_next_values = torch.max(expected_next_values, batched_returns)
                 expected_next_values = expected_next_values.reshape_as(q_values)
-                loss = (
-                    self.criterion(
-                        q_values[batched_loss_flags],
-                        expected_next_values[batched_loss_flags],
-                    )
-                    + self.dqn_reg * q_values.pow(2).mean()
+                loss = self.apply_function_with_loss_flag(
+                    self.criterion,
+                    q_values,
+                    expected_next_values,
+                    batched_loss_flags,
+                ) + self.apply_regularization(
+                    self.dqn_reg, q_values.pow(2), batched_loss_flags
                 )
                 self.optimizer.zero_grad(set_to_none=True)
                 loss.backward()

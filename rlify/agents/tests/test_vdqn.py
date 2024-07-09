@@ -60,7 +60,7 @@ def test_single(env_name, num_parallel_envs, is_rnn):
         num_epochs_per_update=5,
         tensorboard_dir="/tmp/vdqn_test_tensorboard/",
     )
-    train_stats = agent.train_n_steps(env=env, n_steps=800)
+    train_stats = agent.train_n_steps(env=env, n_steps=400)
     reward = agent.run_env(env, best_act=True)
     agent.save_agent("/tmp/vdqn/vdqn_test.pt")
     agent.load_agent("/tmp/vdqn/vdqn_test.pt")
@@ -68,7 +68,7 @@ def test_single(env_name, num_parallel_envs, is_rnn):
 
 
 def main():
-    test_single("Taxi-v3", 4, False)
+    test_single("CartPole-v1", 4, True)
 
 
 if __name__ == "__main__":

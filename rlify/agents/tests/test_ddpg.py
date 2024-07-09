@@ -79,7 +79,7 @@ def test_single(env_name, num_parallel_envs, is_rnn):
         target_update="soft[tau=0.05]",
     )
 
-    train_stats = agent.train_n_steps(env=env, n_steps=800)
+    train_stats = agent.train_n_steps(env=env, n_steps=400)
     reward = agent.run_env(env, best_act=False)
     agent.save_agent("/tmp/ddpg/ddpg_test.pt")
     agent.load_agent("/tmp//ddpg/ddpg_test.pt")
@@ -87,7 +87,7 @@ def test_single(env_name, num_parallel_envs, is_rnn):
 
 
 def main():
-    test_single("MountainCarContinuous-v0", 4, True)
+    test_single("LunarLanderContinuous-v2", 4, True)
 
 
 if __name__ == "__main__":

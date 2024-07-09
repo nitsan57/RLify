@@ -39,10 +39,10 @@ class DQNDataset(Dataset):
         return len(self.x_dataset)
 
     def __getitems__(self, idx):
-        obsWrapper_obs_collection, tensor_collection, dones, loss_flag = (
+        obs_collection, tensor_collection, dones, loss_flag = (
             self.x_dataset.__getitems__(idx)
         )
-        states, next_states = obsWrapper_obs_collection
+        states, next_states = obs_collection
         actions, rewards, returns, truncated = tensor_collection
         return (
             states,
@@ -114,7 +114,7 @@ class VDQN_Agent(RL_Agent):
             Q_model = fc.FC(input_shape=Q_input_shape, out_shape=Q_out_shape)
             agent = VDQN_Agent(obs_space=env.observation_space, action_space=env.action_space, batch_size=64, max_mem_size=10**5, num_parallel_envs=16,
                                 lr=3e-4, Q_model=Q_model, discount_factor=0.99, target_update='hard[update_freq=10]', tensorboard_dir = None, num_epochs_per_update=2)
-            train_stats = agent.train_n_steps(env=env,n_steps=80000)
+            train_stats = agent.train_n_steps(env=env,n_steps=40000)
 
         Args:
             dqn_reg (float, optional): L2 regularization for the Q network. Defaults to 0.0.
@@ -300,13 +300,15 @@ class VDQN_Agent(RL_Agent):
                 batched_states = batched_states.to(self.device)
                 batched_dones = batched_dones.to(self.device)
                 v_table = self.Q_model(batched_states)
+                # flat in case of RNN (b*seq_len, ...)
+                v_table = v_table.flatten(0, -2)
                 q_values = v_table[
                     np.arange(len(v_table)), batched_actions.long().flatten(0, -1)
                 ]
                 q_values = q_values.reshape_as(batched_actions)
                 with torch.no_grad():
                     q_next = (
-                        self.target_Q_model(batched_next_states)
+                        self.Q_model(batched_next_states)
                         .detach()
                         .flatten(0, -2)
                         .max(1)[0]
@@ -318,12 +320,13 @@ class VDQN_Agent(RL_Agent):
                 )
                 expected_next_values = torch.max(expected_next_values, batched_returns)
                 expected_next_values = expected_next_values.reshape_as(q_values)
-                loss = (
-                    self.criterion(
-                        q_values[batched_loss_flags],
-                        expected_next_values[batched_loss_flags],
-                    )
-                    + self.dqn_reg * q_values.pow(2).mean()
+                loss = self.apply_function_with_loss_flag(
+                    self.criterion,
+                    q_values,
+                    expected_next_values,
+                    batched_loss_flags,
+                ) + self.apply_regularization(
+                    self.dqn_reg, q_values.pow(2), batched_loss_flags
                 )
                 self.optimizer.zero_grad(set_to_none=True)
                 loss.backward()

@@ -297,6 +297,7 @@ class RL_Agent(ABC):
         """
         sets the agent to train mode - all models are set to train mode
         """
+        self.training = True
         self.reset_rnn_hidden()
 
     @abstractmethod
@@ -304,8 +305,30 @@ class RL_Agent(ABC):
         """
         sets the agent to train mode - all models are set to eval mode
         """
+        self.training = False
         self.reset_rnn_hidden()
 
+    def gracefully_close_envs(func):
+        """
+        A decorator that closes the environment processes in case of an exception
+
+        Args:
+            func: the function to wrap
+
+        Returns:
+            the wrapped function
+        """
+
+        def wrapper(self, *args, **kwargs):
+            try:
+                func(self, *args, **kwargs)
+            except Exception as ex:
+                self.close_env_procs()
+                raise ex
+
+        return wrapper
+
+    @gracefully_close_envs
     def train_episodial(
         self,
         env: gym.Env,
@@ -335,6 +358,7 @@ class RL_Agent(ABC):
         )
         return train_r
 
+    @gracefully_close_envs
     def train_n_steps(
         self,
         env: gym.Env,
@@ -442,6 +466,28 @@ class RL_Agent(ABC):
         Returns the trajectories data
         """
         raise NotImplementedError
+
+    def apply_function_with_loss_flag(self, func, arg1, arg2, loss_flag):
+        """
+        Applies the function using only where loss flag is true
+
+        Args:
+            func: the function to apply
+            arg1: the first argument
+            arg2: the second argument
+            loss_flag: the loss flag
+
+        Returns:
+            the result of the function
+        """
+        loss_flag = loss_flag.flatten()
+        return func(arg1.flatten(0, -2)[loss_flag], arg2.flatten(0, -2)[loss_flag])
+
+    def apply_regularization(self, reg_coeff, vector, loss_flag):
+        """
+        Applies the criterion to the arguments
+        """
+        return reg_coeff * (vector.flatten()[loss_flag.flatten()].mean())
 
     def set_num_parallel_env(self, num_parallel_envs):
         """
@@ -709,6 +755,7 @@ class RL_Agent(ABC):
         """
         self.experience.clear()
 
+    @gracefully_close_envs
     def run_env(
         self, env: gym.Env, best_act: bool = True, num_runs: int = 1
     ) -> np.array:

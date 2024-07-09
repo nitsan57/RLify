@@ -42,7 +42,7 @@ class DDPG_Agent(DQN_Agent):
                 out_shape=Q_mle_out_shape,
             )
             agent = DDPG_Agent(obs_space=env.observation_space, action_space=env.action_space, Q_model=Q_model, Q_mle_model=Q_mle_model)
-            train_stats = agent.train_n_steps(env=env_c,n_steps=80000)
+            train_stats = agent.train_n_steps(env=env_c,n_steps=40000)
 
         Args:
             Q_mle_model (BaseModel): The MLE model to use.
@@ -202,20 +202,23 @@ class DDPG_Agent(DQN_Agent):
 
         """
         states = self.pre_process_obs_for_act(observations, num_obs)
-        cont_transform_coeff = self.cont_transform_coeff.expand(num_obs, self.n_actions)
-        cont_transform_bias = self.cont_transform_bias.expand(num_obs, self.n_actions)
+
         if use_target:
             action_pred = self.target_Q_mle_model(states)
         else:
             action_pred = self.Q_mle_model(states)
         action_pred_shape = action_pred.shape
-        all_actions = (
-            torch.tanh(action_pred).flatten(
-                1,
-            )
-            * cont_transform_coeff
-            + cont_transform_bias
+        action_pred = torch.tanh(action_pred).flatten(
+            0,
+            -2,
         )
+        cont_transform_coeff = self.cont_transform_coeff.expand(
+            len(action_pred), self.n_actions
+        )
+        cont_transform_bias = self.cont_transform_bias.expand(
+            len(action_pred), self.n_actions
+        )
+        all_actions = action_pred * cont_transform_coeff + cont_transform_bias
         return all_actions.reshape(action_pred_shape)
 
     def get_actor_action_value(
@@ -244,9 +247,7 @@ class DDPG_Agent(DQN_Agent):
 
     def act(self, observations: np.array, num_obs: int = 1):
         with torch.no_grad():
-            actor_acts = self.actor_action(
-                observations, num_obs
-            )
+            actor_acts = self.actor_action(observations, num_obs)
             if self.possible_actions != "continuous":
                 actor_acts = actor_acts.round()
         actions = self.return_correct_actions_dim(
@@ -307,12 +308,13 @@ class DDPG_Agent(DQN_Agent):
                     + (batched_not_terminated * self.discount_factor) * q_next.detach()
                 )
                 expected_next_values = torch.max(expected_next_values, batched_returns)
-                loss = (
-                    self.criterion(
-                        q_values[batched_loss_flags],
-                        expected_next_values[batched_loss_flags],
-                    )
-                    + self.dqn_reg * q_values.pow(2).mean()
+                loss = self.apply_function_with_loss_flag(
+                    self.criterion,
+                    q_values,
+                    expected_next_values,
+                    batched_loss_flags,
+                ) + self.apply_regularization(
+                    self.dqn_reg, q_values.pow(2), batched_loss_flags
                 )
                 actor_action = self.actor_action(
                     batched_states, real_batch_size, use_target=False
@@ -320,7 +322,14 @@ class DDPG_Agent(DQN_Agent):
                 actor_values = self.get_actor_action_value(
                     batched_states, actor_action, use_target=False
                 )
-                actor_loss = -(actor_values[batched_loss_flags].mean())
+                # simple maximisze of actor reward (without changing Q function)
+                actor_loss = self.apply_function_with_loss_flag(
+                    lambda x, y: -x.mean(),
+                    actor_values,
+                    torch.zeros_like(actor_values),
+                    batched_loss_flags,
+                )
+
                 self.q_mle_optimizer.zero_grad(set_to_none=True)
                 actor_loss.backward()  # simple maximisze of actor reward (without changing Q function)
                 self.q_mle_optimizer.step()

@@ -62,7 +62,7 @@ def test_single(env_name, num_parallel_envs, is_rnn):
         tensorboard_dir="/tmp/vdqn_test",
         target_update="hard[update_freq=10]",
     )
-    train_stats = agent.train_n_steps(env=env, n_steps=800)
+    train_stats = agent.train_n_steps(env=env, n_steps=400)
     reward = agent.run_env(env, best_act=True)
     agent = DQN_Agent(
         obs_space=env.observation_space,
@@ -79,7 +79,7 @@ def test_single(env_name, num_parallel_envs, is_rnn):
         tensorboard_dir="/tmp/dqn/dqn_test_tensorboard",
         target_update="soft[tau=0.01]",
     )
-    train_stats = agent.train_n_steps(env=env, n_steps=800)
+    train_stats = agent.train_n_steps(env=env, n_steps=400)
     reward = agent.run_env(env, best_act=True)
     agent.save_agent("/tmp/dqn/dqn_test.pt")
     agent.load_agent("/tmp//dqn/dqn_test.pt")

@@ -15,7 +15,6 @@ def worker(env, conn):
         conn: The connection to the main process.
     """
     proc_running = True
-
     done = False
 
     while proc_running:
