@@ -47,7 +47,6 @@ class GRU(ReccurentLayer):
             k: np.prod(self.input_shape[k]) for k in self.input_shape
         }
         self.num_inputs = len(self.input_size_dict)
-
         self.hidden_dim = hidden_dim
         self.reset()  # init hidden state
         self.num_grus = num_grus
@@ -76,7 +75,7 @@ class GRU(ReccurentLayer):
         concat_tensor = torch.cat(concat_tensor, -1)
         out = self.concat_layer(concat_tensor)
         out = self.out_layer(out)
-        return out
+        return out.reshape(-1, *self.out_shape)
 
     def reset(self):
         self.hidden_state = {k: None for k in self.input_shape}

@@ -321,7 +321,7 @@ class RL_Agent(ABC):
 
         def wrapper(self, *args, **kwargs):
             try:
-                func(self, *args, **kwargs)
+                return func(self, *args, **kwargs)
             except Exception as ex:
                 self.close_env_procs()
                 raise ex
@@ -467,7 +467,7 @@ class RL_Agent(ABC):
         """
         raise NotImplementedError
 
-    def apply_function_with_loss_flag(self, func, arg1, arg2, loss_flag):
+    def criterion_using_loss_flag(self, func, arg1, arg2, loss_flag):
         """
         Applies the function using only where loss flag is true
 
@@ -481,7 +481,7 @@ class RL_Agent(ABC):
             the result of the function
         """
         loss_flag = loss_flag.flatten()
-        return func(arg1.flatten(0, -2)[loss_flag], arg2.flatten(0, -2)[loss_flag])
+        return func(arg1.flatten()[loss_flag], arg2.flatten()[loss_flag])
 
     def apply_regularization(self, reg_coeff, vector, loss_flag):
         """

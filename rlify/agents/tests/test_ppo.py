@@ -82,7 +82,7 @@ def test_single(env_name, num_parallel_envs, is_rnn):
 
 
 def main():
-    test_single("LunarLanderContinuous-v2", 4, True)
+    test_single("LunarLanderContinuous-v2", 1, True)
 
 
 if __name__ == "__main__":

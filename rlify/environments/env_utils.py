@@ -1,5 +1,4 @@
 from collections import namedtuple
-import multiprocessing
 from multiprocessing import Process, Pipe
 import gymnasium as gym
 import gc
@@ -138,13 +137,24 @@ class ParallelEnv_m:
         """
         [p.connection.send(("change_env", copy.deepcopy(env))) for p in self.comm]
 
+    def get_responses(self):
+        """
+        Gets the responses from the environments.
+        """
+        timeout = 5
+        got_data = all([p.connection.poll(timeout) for p in self.comm])
+        if got_data:
+            return [p.connection.recv() for p in self.comm]
+        else:
+            self.close_procs()
+            raise Exception("Timeout in getting responses")
     def get_envs(self):
         """
         Returns:
             A list of the environments.
         """
         [p.connection.send(("get_env", "")) for p in self.comm]
-        res = [p.connection.recv() for p in self.comm]
+        res = self.get_responses()
         return res
 
     def reset(self):
@@ -152,7 +162,7 @@ class ParallelEnv_m:
         Resets the environments.
         """
         [p.connection.send(("reset", "")) for p in self.comm]
-        res = [p.connection.recv() for p in self.comm]
+        res = self.get_responses()
         return res
 
     def step(self, actions):
@@ -168,7 +178,7 @@ class ParallelEnv_m:
         ]
 
         # Receive response from envs.
-        res = [p.connection.recv() for p in self.comm]
+        res = self.get_responses()
         next_states, rewards, terminated, truncated, _ = zip(*res)
         rewards = np.array(rewards)
         terminated = np.array(terminated)

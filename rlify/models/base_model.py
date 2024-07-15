@@ -24,7 +24,8 @@ class BaseModel(torch.nn.Module, ABC):
             k: np.prod(self.input_shape[k]) for k in self.input_shape
         }
         self.num_inputs = len(self.input_size_dict)
-        self.out_shape = out_shape
+        self.out_shape = np.array(out_shape, ndmin=1)
+
 
     def get_total_params(self):
         """

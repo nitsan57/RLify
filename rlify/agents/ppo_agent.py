@@ -192,13 +192,13 @@ class PPO_Agent(RL_Agent):
                 self.action_space.start,
                 self.possible_actions,
                 self.n_actions,
-                self.policy_nn(x).flatten(0, -2),
+                self.policy_nn(x).reshape(-1, self.possible_actions),
             )
         else:
             self.actor_model = lambda x: MCAW(
                 self.action_space.low,
                 self.action_space.high,
-                self.policy_nn(x).flatten(0, -2),
+                self.policy_nn(x).reshape(-1, 2*self.n_actions),
             )
 
         weight = list(self.policy_nn.children())[-1].weight.data
@@ -274,7 +274,6 @@ class PPO_Agent(RL_Agent):
             action = actions_dist.sample()
 
         selected_actions = action.detach().cpu().numpy()
-
         return self.return_correct_actions_dim(selected_actions, num_obs)
 
     def get_trajectories_data(self):
@@ -311,20 +310,19 @@ class PPO_Agent(RL_Agent):
                 batched_states = batched_states.to(self.device)
                 logit = (
                     self.actor_model(batched_states)
-                    .log_prob(batched_actions.flatten(0, -2))
-                    .flatten(0, -2)[batched_loss_flags.flatten()]
+                    .log_prob(batched_actions.reshape(-1, self.n_actions))[batched_loss_flags.flatten()]
                 )
                 logits.append(logit.to("cpu"))
                 values.append(
                     self.critic_nn(batched_states)
                     .squeeze()
-                    .to("cpu")[batched_loss_flags]
+                    .to("cpu")[batched_loss_flags.flatten()]
                 )
 
         if training:
             self.set_train_mode()
         return (
-            torch.cat(logits).flatten(0, -2).detach().cpu().numpy(),
+            torch.cat(logits).reshape(-1, self.n_actions).detach().cpu().numpy(),
             torch.cat(values).flatten().detach().cpu().numpy(),
         )
 
@@ -437,18 +435,14 @@ class PPO_Agent(RL_Agent):
                 batched_dones = batched_dones.to(self.device)
                 dist = self.actor_model(batch_states)
                 critic_values = self.critic_nn(batch_states)
-                new_log_probs = dist.log_prob(batched_actions.flatten(0, -2))
-                # log_ratio = self.apply_function_with_loss_flag(
-                #     lambda x, y: torch.clamp(x, 1e-3, 0.0) - torch.clamp(y, 1e-3, 0.0),
-                #     new_log_probs,
-                #     old_log_probs,
-                #     batched_loss_flags,
-                # )
-                new_log_probs = new_log_probs.reshape_as(old_log_probs)
+                new_log_probs = dist.log_prob(batched_actions.reshape(-1, self.n_actions))
+                old_log_probs = old_log_probs.reshape_as(new_log_probs)
                 log_ratio = torch.clamp(new_log_probs, 1e-3, 0.0) - torch.clamp(
                     old_log_probs, 1e-3, 0.0
                 )
                 ratio = log_ratio.exp().mean(-1)
+                log_ratio = ratio.log()
+                batched_advantages = batched_advantages.reshape_as(ratio)
                 surr1 = ratio * batched_advantages
                 surr2 = (
                     torch.clamp(
@@ -456,15 +450,14 @@ class PPO_Agent(RL_Agent):
                     )
                     * batched_advantages
                 )
-                entropy = dist.entropy()
                 actor_criterion = lambda x, y: -torch.min(x, y).mean()
-                actor_loss = self.apply_function_with_loss_flag(
+                actor_loss = self.criterion_using_loss_flag(
                     actor_criterion, surr1, surr2, batched_loss_flags
                 )
-                -self.apply_regularization(
+                entropy = dist.entropy()
+                actor_loss = actor_loss-self.apply_regularization(
                     self.entropy_coeff, entropy, batched_loss_flags
                 )
-
                 kl_div = -(ratio * log_ratio - (ratio - 1)).mean().item()
 
                 if np.abs(kl_div) > self.kl_div_thresh:
@@ -481,7 +474,7 @@ class PPO_Agent(RL_Agent):
                 actor_loss.backward()
                 # nn.utils.clip_grad_norm_(self.policy_nn.parameters(), 0.5)
                 self.actor_optimizer.step()
-                critic_loss = self.apply_function_with_loss_flag(
+                critic_loss = self.criterion_using_loss_flag(
                     self.criterion,
                     critic_values,
                     batched_returns,

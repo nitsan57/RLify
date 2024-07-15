@@ -239,6 +239,7 @@ class DDPG_Agent(DQN_Agent):
             torch.tensor: The actions values
         """
         states["action"] = actions
+        
         if use_target:
             actions_values = self.target_Q_model(states).squeeze(-1)
         else:
@@ -298,17 +299,18 @@ class DDPG_Agent(DQN_Agent):
                         real_batch_size,
                         use_target=True,
                     )
+                    actor_next_action = actor_next_action.reshape_as(batched_actions)
                     q_next = self.get_actor_action_value(
                         batched_next_states,
                         actor_next_action,
                         use_target=True,
-                    )
+                    ).detach()
                 expected_next_values = (
                     batched_rewards
-                    + (batched_not_terminated * self.discount_factor) * q_next.detach()
+                    + (batched_not_terminated * self.discount_factor) * q_next.reshape_as(batched_returns)
                 )
                 expected_next_values = torch.max(expected_next_values, batched_returns)
-                loss = self.apply_function_with_loss_flag(
+                loss = self.criterion_using_loss_flag(
                     self.criterion,
                     q_values,
                     expected_next_values,
@@ -319,11 +321,12 @@ class DDPG_Agent(DQN_Agent):
                 actor_action = self.actor_action(
                     batched_states, real_batch_size, use_target=False
                 )
+                actor_action = actor_action.reshape_as(batched_actions)
                 actor_values = self.get_actor_action_value(
                     batched_states, actor_action, use_target=False
                 )
                 # simple maximisze of actor reward (without changing Q function)
-                actor_loss = self.apply_function_with_loss_flag(
+                actor_loss = self.criterion_using_loss_flag(
                     lambda x, y: -x.mean(),
                     actor_values,
                     torch.zeros_like(actor_values),

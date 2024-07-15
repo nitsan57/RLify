@@ -169,17 +169,15 @@ class DQN_Agent(VDQN_Agent):
                 ).squeeze()
                 batched_dones = batched_dones.to(self.device)
                 batched_terminated = 1 - batched_not_terminated
-                v_table = self.Q_model(batched_states)
-                v_table = v_table.flatten(0, -2)
+                v_table = self.Q_model(batched_states).reshape(-1, self.possible_actions)
                 q_values = v_table[
-                    np.arange(len(v_table)), batched_actions.long().flatten(0, -1)
+                    np.arange(len(v_table)), batched_actions.long().flatten()
                 ]
                 q_values = q_values.reshape_as(batched_actions)
                 with torch.no_grad():
                     q_next = (
                         self.target_Q_model(batched_next_states)
                         .detach()
-                        .flatten(0, -2)
                         .max(1)[0]
                     )
                     q_next = q_next.reshape_as(batched_actions)
@@ -189,7 +187,7 @@ class DQN_Agent(VDQN_Agent):
                 )
                 expected_next_values = torch.max(expected_next_values, batched_returns)
                 expected_next_values = expected_next_values.reshape_as(q_values)
-                loss = self.apply_function_with_loss_flag(
+                loss = self.criterion_using_loss_flag(
                     self.criterion,
                     q_values,
                     expected_next_values,
