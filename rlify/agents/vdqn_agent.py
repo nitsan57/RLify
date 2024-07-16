@@ -88,6 +88,16 @@ class DQNData(IData):
         super().__init__(dataset, prepare_for_rnn)
 
 
+# class Q_Model(nn.Module):
+#     def __init__(self, nn: BaseModel, out_shape: tuple):
+#         super().__init__(out_shape)
+#         self.nn = nn
+#         self.out_shape = out_shape
+
+#     def forward(self, x):
+#         return self.nn(x).reshape(-1, *self.out_shape)
+
+
 class VDQN_Agent(RL_Agent):
     """
     DQN Agent
@@ -306,11 +316,7 @@ class VDQN_Agent(RL_Agent):
                     np.arange(len(v_table)), batched_actions.long().flatten()
                 ]
                 with torch.no_grad():
-                    q_next = (
-                        self.Q_model(batched_next_states)
-                        .detach()
-                        .max(1)[0]
-                    )
+                    q_next = self.Q_model(batched_next_states).detach().max(1)[0]
                     q_next = q_next.reshape_as(batched_actions)
 
                 expected_next_values = (
