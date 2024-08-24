@@ -1,15 +1,113 @@
-from typing import Any
+import logging
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import numpy as np
-from .agent_utils import ExperienceReplay, ForgettingExperienceReplay, calc_gaes
+from .agent_utils import ObsWrapper, calc_gaes, LambdaDataset, IData, LambdaData
+from rlify.agents.experience_replay import ForgettingExperienceReplay
 from .action_spaces_utils import MCAW, MDA
 from .explorers import Explorer, RandomExplorer
 from .drl_agent import RL_Agent
 import adabelief_pytorch
 from rlify.utils import HiddenPrints
-from collections import defaultdict
+import gc
+from torch.utils.data import Dataset
+import gymnasium as gym
+
+
+class PPODataset(Dataset):
+    """
+    Dataset for PPO.
+    """
+
+    def __init__(
+        self,
+        states,
+        actions,
+        dones,
+        returns,
+        advantages,
+        logits,
+        prepare_for_rnn,
+    ):
+        """
+
+        Args:
+            states (np.ndarray): The states.
+            actions (np.ndarray): The actions.
+            dones (np.ndarray): The dones.
+            returns (np.ndarray): The returns.
+            advantages (np.ndarray): The advantages.
+            logits (np.ndarray): The logits.
+            prepare_for_rnn (bool): Whether to prepare for RNN.
+
+        """
+        obs_collection = (states,)
+        tensor_collection = actions, returns, advantages, logits
+        self.x_dataset = LambdaDataset(
+            obs_collection,
+            tensor_collection=tensor_collection,
+            dones=dones,
+            prepare_for_rnn=prepare_for_rnn,
+        )
+        self.prepare_for_rnn = prepare_for_rnn
+
+    def __len__(self):
+        return len(self.x_dataset)
+
+    def __getitems__(self, idx):
+        obs_collection, tensor_collection, dones, loss_flag = (
+            self.x_dataset.__getitems__(idx)
+        )
+        states = obs_collection[0]
+        actions, returns, advantages, logits = tensor_collection
+        return (
+            states,
+            actions,
+            dones,
+            returns,
+            advantages,
+            logits,
+            loss_flag,
+        )
+
+    def __getitem__(self, idx):
+        return self.__getitems__(idx)
+
+    def collate_fn(self, batch):
+        return batch
+
+
+class PPOData(IData):
+    """
+    A class for PPO data.
+    """
+
+    def __init__(
+        self,
+        states,
+        actions,
+        dones,
+        returns,
+        advantages,
+        logits,
+        prepare_for_rnn,
+    ):
+        """
+
+        Args:
+            states (np.ndarray): The states.
+            actions (np.ndarray): The actions.
+            dones (np.ndarray): The dones.
+            returns (np.ndarray): The returns.
+            advantages (np.ndarray): The advantages.
+            logits (np.ndarray): The logits.
+            prepare_for_rnn (bool): Whether to prepare for RNN.
+
+        """
+        dataset = PPODataset(
+            states, actions, dones, returns, advantages, logits, prepare_for_rnn
+        )
+        super().__init__(dataset, prepare_for_rnn)
 
 
 class PPO_Agent(RL_Agent):
@@ -19,17 +117,26 @@ class PPO_Agent(RL_Agent):
 
     def __init__(
         self,
+        obs_space: gym.spaces,
+        action_space: gym.spaces,
         policy_nn,
         critic_nn,
         batch_size: int = 1024,
         entropy_coeff: float = 0.1,
-        num_epochs_per_update: int = 10,
         kl_div_thresh: float = 0.03,
         clip_param: float = 0.1,
-        experience_class: ForgettingExperienceReplay = ForgettingExperienceReplay,
         explorer: Explorer = RandomExplorer(0, 0, 0),
-        *args,
-        **kwargs,
+        num_parallel_envs: int = 4,
+        num_epochs_per_update: int = 10,
+        lr: float = 3e-4,
+        device: str = None,
+        experience_class: object = ForgettingExperienceReplay,
+        max_mem_size: int = int(10e5),
+        discount_factor: float = 0.99,
+        reward_normalization=True,
+        tensorboard_dir: str = "./tensorboard",
+        dataloader_workers: int = 0,
+        accumulate_gradients_per_epoch: bool = None,
     ):
         """
         Example::
@@ -48,25 +155,45 @@ class PPO_Agent(RL_Agent):
             train_stats = agent.train_n_steps(env=env,n_steps=250000)
 
         Args:
-            batch_size (int): Batch size for sampling from replay buffer.
-            entropy_coeff (float): Entropy regularization coefficient.
-            num_epochs_per_update (int): Training epochs per update.
-            kl_div_thresh (float): KL divergence threshold.
-            clip_param (float): Clipping parameter.
-            experience_class (ForgettingExperienceReplay): Experience replay class to use.
-            explorer (Explorer): Class for random exploration.
-            kwArgs: Additional RL_Agent arguments.
+            obs_space (gym.spaces): The observation space of the environment.
+            action_space (gym.spaces): The action space of the environment.
+            policy_nn (nn.Module): The policy neural network.
+            critic_nn (nn.Module): The critic neural network.
+            batch_size (int): The batch size for training.
+            entropy_coeff (float): The coefficient for the entropy regularization term.
+            kl_div_thresh (float): The threshold for the KL divergence between old and new policy.
+            clip_param (float): The clipping parameter for the PPO loss.
+            explorer (Explorer): The exploration strategy.
+            num_parallel_envs (int): The number of parallel environments.
+            num_epochs_per_update (int): The number of epochs per update.
+            lr (float): The learning rate.
+            device (str): The device to use for training.
+            experience_class (object): The experience replay class.
+            max_mem_size (int): The maximum memory size for experience replay.
+            discount_factor (float): The discount factor for future rewards.
+            reward_normalization (bool): Whether to normalize rewards.
+            tensorboard_dir (str): The directory to save tensorboard logs.
+            dataloader_workers (int): The number of workers for the dataloader.
+            accumulate_gradients_per_epoch (bool): Whether to accumulate gradients per epoch.
         """
         self.policy_nn = policy_nn
         self.critic_nn = critic_nn
         super().__init__(
-            *args,
-            **kwargs,
-            num_epochs_per_update=num_epochs_per_update,
+            obs_space=obs_space,
+            action_space=action_space,
             batch_size=batch_size,
-            experience_class=experience_class,
             explorer=explorer,
-        )  # inits
+            num_parallel_envs=num_parallel_envs,
+            num_epochs_per_update=num_epochs_per_update,
+            lr=lr,
+            device=device,
+            experience_class=experience_class,
+            max_mem_size=max_mem_size,
+            discount_factor=discount_factor,
+            reward_normalization=reward_normalization,
+            tensorboard_dir=tensorboard_dir,
+            dataloader_workers=dataloader_workers,
+        )
 
         self.kl_div_thresh = kl_div_thresh
         self.clip_param = clip_param
@@ -121,15 +248,17 @@ class PPO_Agent(RL_Agent):
         self.policy_nn = self.policy_nn.to(self.device)
         self.critic_nn = self.critic_nn.to(self.device)
         if np.issubdtype(self.action_dtype, np.integer):
-            self.actor_model = lambda x, d=torch.ones((1, 1)): MDA(
+            self.actor_model = lambda x: MDA(
                 self.action_space.start,
                 self.possible_actions,
                 self.n_actions,
-                self.policy_nn(x, d),
+                self.policy_nn(x).reshape(-1, self.possible_actions),
             )
         else:
-            self.actor_model = lambda x, d=torch.ones((1, 1)): MCAW(
-                self.action_space.low, self.action_space.high, self.policy_nn(x, d)
+            self.actor_model = lambda x: MCAW(
+                self.action_space.low,
+                self.action_space.high,
+                self.policy_nn(x).reshape(-1, 2 * self.n_actions),
             )
 
         weight = list(self.policy_nn.children())[-1].weight.data
@@ -148,6 +277,7 @@ class PPO_Agent(RL_Agent):
                 self.lr,
                 amsgrad=False,
             )
+            return [self.policy_nn, self.critic_nn]
 
     def save_agent(self, f_name) -> dict:
         save_dict = super().save_agent(f_name)
@@ -183,7 +313,7 @@ class PPO_Agent(RL_Agent):
         states = self.pre_process_obs_for_act(observations, num_obs)
 
         with torch.no_grad():
-            actions_dist = self.actor_model(states, torch.ones((num_obs, 1)))
+            actions_dist = self.actor_model(states)
         selected_actions = torch.argmax(actions_dist.probs, 1).detach().cpu().numpy()
         return self.return_correct_actions_dim(selected_actions, num_obs)
 
@@ -191,7 +321,7 @@ class PPO_Agent(RL_Agent):
         states = self.pre_process_obs_for_act(observations, num_obs)
 
         with torch.no_grad():
-            actions_dist = self.actor_model(states, torch.ones((num_obs, 1)))
+            actions_dist = self.actor_model(states)
 
         selected_actions = actions_dist.loc.detach().cpu().numpy()
         return self.return_correct_actions_dim(selected_actions, num_obs)
@@ -200,116 +330,183 @@ class PPO_Agent(RL_Agent):
         states = self.pre_process_obs_for_act(observations, num_obs)
 
         with torch.no_grad():
-            actions_dist = self.actor_model(
-                states, torch.ones((num_obs, 1), device=self.device)
-            )
+            actions_dist = self.actor_model(states)
             action = actions_dist.sample()
 
         selected_actions = action.detach().cpu().numpy()
-
         return self.return_correct_actions_dim(selected_actions, num_obs)
 
-    def _get_ppo_experiences(self, num_episodes=None, safe_check=True):
-        """Current PPO only suports random_Samples = False!!"""
+    def get_trajectories_data(self):
+        return self._get_ppo_experiences()
 
-        if num_episodes is None:
-            num_episodes = self.num_parallel_envs
-
-        if safe_check:
-            assert num_episodes <= self.num_parallel_envs
-
-        # get the obs in np array
-        states, actions, rewards, dones, truncated, next_states = (
-            self.experience.get_last_episodes(num_episodes)
+    def calc_logits_values(self, states, actions, dones):
+        data = LambdaData(
+            obs_collection=(states,),
+            tensor_collection=(actions,),
+            dones=dones,
+            prepare_for_rnn=self.contains_reccurent_nn(),
+        )
+        dl = data.get_dataloader(
+            self.get_train_batch_size(),
+            shuffle=False,
+            num_workers=self.dataloader_workers,
         )
 
-        actions = torch.from_numpy(actions).to(self.device)
-        if len(actions.shape) == 1:
-            actions = actions.unsqueeze(-1)
-        rewards = torch.from_numpy(rewards).to(self.device)
-        dones = torch.from_numpy(dones).to(self.device)
-        truncated = torch.from_numpy(truncated).to(self.device)
-        states = states.get_as_tensors(self.device)  # OBS WRAPER api
+        values = []
+        logits = []
+        batched_loss_flags_list = []
+        training = self.training
 
         self.set_eval_mode()
         with torch.no_grad():
-            values = self.critic_nn(states, dones).squeeze()
-            dist = self.actor_model(states, dones)
-        self.set_train_mode()
-        logits = dist.log_prob(actions)
-        return states, actions, rewards, dones, truncated, values, logits
 
-    def update_policy(self, *exp):
+            for mb in dl:
+                (
+                    obs_collection,
+                    tensor_collection,
+                    batched_dones,
+                    batched_loss_flags,
+                ) = mb
+                batched_loss_flags_list.append(batched_loss_flags)
+                b = batched_dones.shape[0]
+                batched_states = obs_collection[0]
+                batched_actions = tensor_collection[0]
+                batched_actions = batched_actions.to(self.device, non_blocking=True)
+                batched_states = batched_states.to(self.device)
+                dist = self.actor_model(batched_states)
+                logit = dist.log_prob(batched_actions.reshape(-1, self.n_actions))
+                logit = logit.reshape(((b, -1, self.n_actions)))
+                logits.append(logit.to("cpu"))
+                values.append(self.critic_nn(batched_states).to("cpu"))
+
+        if training:
+            self.set_train_mode()
+        batched_loss_flags = torch.cat(batched_loss_flags_list, -1).flatten()
+        if self.contains_reccurent_nn():
+            return (
+                torch.cat(logits, 1)
+                .reshape(-1, self.n_actions)
+                .detach()
+                .cpu()
+                .numpy()[batched_loss_flags],
+                torch.cat(values, 1)
+                .flatten()
+                .detach()
+                .cpu()
+                .numpy()[batched_loss_flags],
+            )
+        else:
+            return (
+                torch.cat(logits)
+                .reshape(-1, self.n_actions)
+                .detach()
+                .cpu()
+                .numpy()[batched_loss_flags],
+                torch.cat(values).flatten().detach().cpu().numpy()[batched_loss_flags],
+            )
+
+    def _get_ppo_experiences(self, num_episodes=None):
+        """
+        Get the experiences for PPO
+        Args:
+            num_episodes (int): Number of episodes to get.
+
+        Returns:
+            tuple: (states, actions, rewards, dones, truncated, next_states)
+
+        """
+        if num_episodes is None:
+            num_episodes = self.num_parallel_envs
+            states, actions, rewards, dones, truncated, next_states = (
+                self.experience.get_last_episodes(num_episodes)
+            )
+        logits, values = self.calc_logits_values(states, actions, dones)
+        advantages, returns = calc_gaes(
+            rewards,
+            values,
+            terminated=dones * (1 - truncated),
+            discount_factor=self.discount_factor,
+        )
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-10)
+        returns = np.expand_dims(returns, -1)
+        trajectory_data = PPOData(
+            states,
+            actions,
+            dones,
+            returns,
+            advantages,
+            logits,
+            self.contains_reccurent_nn(),
+        )
+        return trajectory_data
+
+    def update_policy(self, trajectory_data: PPOData):
         """
         Update the policy network.
         Args: exp (tuple): Experience tuple.
         """
-        if len(exp) == 0:
-            states, actions, rewards, dones, truncated, values, logits = (
-                self._get_ppo_experiences()
-            )
-        else:
-            states, actions, rewards, dones, truncated, values, logits = exp
 
-        terminated = dones * (1 - truncated)
-        advantages, returns = calc_gaes(
-            rewards, values, terminated, self.discount_factor
+        shuffle = False if (self.policy_nn.is_rnn) else True
+        ppo_dataloader = trajectory_data.get_dataloader(
+            self.get_train_batch_size(),
+            shuffle=shuffle,
+            num_workers=self.dataloader_workers,
         )
-
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-10)
-        returns = returns.unsqueeze(-1)
-
-        all_samples_len = len(states)
-        b_size = self.batch_size if not self.policy_nn.is_rnn else all_samples_len
-        rand_perm = False if (self.policy_nn.is_rnn) else True
-        import time
-
         for e in range(self.num_epochs_per_update):
-            indices_perm = (
-                torch.randperm(len(returns))
-                if rand_perm
-                else torch.arange(len(returns))
-            )
-            states = states[indices_perm]
-            actions = actions[indices_perm]
-            returns = returns[indices_perm]
-            advantages = advantages[indices_perm]
-            logits = logits[indices_perm]
             kl_div_bool = False
-            for b in range(0, all_samples_len, b_size):
-                batch_states = states[b : b + b_size]
-                batched_actions = actions[b : b + b_size]
-                batched_returns = returns[b : b + b_size]
-                batched_advantage = advantages[b : b + b_size]
-                batched_logits = logits[b : b + b_size]
-                batched_dones = dones[b : b + b_size]
-
-                dist = self.actor_model(batch_states, batched_dones)
-                critic_values = self.critic_nn(batch_states, batched_dones)
-                new_log_probs = dist.log_prob(batched_actions)
-
-                old_log_probs = batched_logits  # from acted policy
+            self.actor_optimizer.zero_grad()
+            self.critic_optimizer.zero_grad()
+            for b, mb in enumerate(ppo_dataloader):
+                (
+                    batched_states,
+                    batched_actions,
+                    batched_dones,
+                    batched_returns,
+                    batched_advantages,
+                    batched_logits,
+                    batched_loss_flags,
+                ) = mb
+                batched_returns = batched_returns.to(self.device, non_blocking=True)
+                batched_advantages = batched_advantages.to(
+                    self.device, non_blocking=True
+                )
+                old_log_probs = batched_logits.to(self.device, non_blocking=True)
+                batched_actions = batched_actions.to(self.device, non_blocking=True)
+                batched_states = batched_states.to(self.device)
+                batched_dones = batched_dones.to(self.device)
+                dist = self.actor_model(batched_states)
+                critic_values = self.critic_nn(batched_states)
+                new_log_probs = dist.log_prob(
+                    batched_actions.reshape(-1, self.n_actions)
+                )
+                old_log_probs = old_log_probs.reshape_as(new_log_probs)
                 log_ratio = torch.clamp(new_log_probs, np.log(1e-3), 0.0) - torch.clamp(
                     old_log_probs, np.log(1e-3), 0.0
                 )
                 ratio = log_ratio.exp().mean(-1)
-                log_ratio = torch.log(ratio)
-
-                surr1 = ratio * batched_advantage
+                log_ratio = ratio.log()
+                batched_advantages = batched_advantages.reshape_as(ratio)
+                surr1 = ratio * batched_advantages
                 surr2 = (
                     torch.clamp(
                         ratio, 1.0 / (1.0 + self.clip_param), 1.0 + self.clip_param
                     )
-                    * batched_advantage
+                    * batched_advantages
                 )
-                entropy = dist.entropy().mean()
-                actor_loss = (
-                    -(torch.min(surr1, surr2).mean()) - self.entropy_coeff * entropy
+                actor_criterion = lambda x, y: -torch.min(x, y).mean()
+                actor_loss = self.criterion_using_loss_flag(
+                    actor_criterion, surr1, surr2, batched_loss_flags
                 )
-                kl_div = (
-                    -(ratio * log_ratio - (ratio - 1)).mean().item()
-                )  # kl_div = (old_log_probs - new_log_probs).mean().item() #
+                entropy = dist.entropy()
+                actor_loss = actor_loss - self.apply_regularization(
+                    self.entropy_coeff, entropy, batched_loss_flags
+                )
 
+                kl_div = (
+                    -(ratio * log_ratio - (ratio - 1))[batched_loss_flags.flatten()]
+                    .mean()
+                    .item()
+                )
                 if np.abs(kl_div) > self.kl_div_thresh:
                     kl_div_bool = True
                     if e == 0 and b == 0:
@@ -318,19 +515,45 @@ class PPO_Agent(RL_Agent):
                             e,
                             kl_div,
                         )
-                    # print("kl div exceeded", e, kl_div)
                     break
-                self.actor_optimizer.zero_grad(set_to_none=True)
-                actor_loss.backward()
-                # nn.utils.clip_grad_norm_(self.policy_nn.parameters(), 0.5)
-                self.actor_optimizer.step()
-                critic_loss = self.criterion(critic_values, batched_returns)
-                self.critic_optimizer.zero_grad(set_to_none=True)
-                critic_loss.backward()
-                self.critic_optimizer.step()
+
+                critic_loss = self.criterion_using_loss_flag(
+                    self.criterion,
+                    critic_values,
+                    batched_returns,
+                    batched_loss_flags,
+                )
+                if not self.accumulate_gradients_per_epoch:
+                    self.actor_optimizer.zero_grad(set_to_none=True)
+                    self.critic_optimizer.zero_grad(set_to_none=True)
+                    actor_loss.backward()
+                    self.actor_optimizer.step()
+                    critic_loss = self.criterion_using_loss_flag(
+                        self.criterion,
+                        critic_values,
+                        batched_returns,
+                        batched_loss_flags,
+                    )
+                    critic_loss.backward()
+                    self.critic_optimizer.step()
+                else:
+                    actor_loss = actor_loss / len(ppo_dataloader)
+                    actor_loss.backward()
+                    critic_loss = self.criterion_using_loss_flag(
+                        self.criterion,
+                        critic_values,
+                        batched_returns,
+                        batched_loss_flags,
+                    )
+                    critic_loss = critic_loss / len(ppo_dataloader)
+                    critic_loss.backward()
+
                 self.metrics.add("kl_div", kl_div)
                 self.metrics.add("critic_loss", critic_loss.item())
                 self.metrics.add("actor_loss", actor_loss.item())
 
             if kl_div_bool:
                 break
+            if self.accumulate_gradients_per_epoch:
+                self.actor_optimizer.step()
+                self.critic_optimizer.step()

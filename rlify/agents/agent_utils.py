@@ -1,11 +1,60 @@
-from collections import namedtuple
-from multiprocessing import Process, Pipe
+import logging
 import numpy as np
 import torch
 import copy
-import gc
 import gymnasium as gym
 from collections import defaultdict
+from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
+
+
+def pad_from_done_indices(data, dones):
+    """
+    Packs the data from the done indices to torch.nn.utils.rnn.PackedSequence
+
+    """
+    if isinstance(data, ObsWrapper):
+        return pad_states_from_done_indices(data, dones)
+    elif isinstance(data, torch.Tensor):
+        return pad_tensors_from_done_indices(data, dones)
+
+
+def pad_states_from_done_indices(data, dones):
+    """
+    Packs the data from the done indices to torch.nn.utils.rnn.PackedSequence
+
+    """
+    done_indices = torch.where(dones == True)[0].cpu().numpy().astype(np.int32)
+    padded_obs = ObsWrapper(tensors=True)
+    for k in data:
+        temp = []
+        curr_idx = 0
+        for i, d_i in enumerate(done_indices):
+            temp.append(data[k][curr_idx : d_i + 1])
+            curr_idx = d_i + 1  #
+        padded_seq_batch = torch.nn.utils.rnn.pad_sequence(temp, batch_first=True)
+        padded_obs[k] = padded_seq_batch
+    lengths = done_indices - np.roll(done_indices, 1)
+    lengths[0] = done_indices[0]
+    return padded_obs, lengths
+
+
+def pad_tensors_from_done_indices(data, dones):
+    """
+    Packs the data from the done indices to torch.nn.utils.rnn.PackedSequence
+
+    """
+    done_indices = torch.where(dones == True)[0].cpu().numpy().astype(np.int32)
+    temp = []
+    curr_idx = 0
+    for i, d_i in enumerate(done_indices):
+        temp.append(data[curr_idx : d_i + 1])
+        curr_idx = d_i + 1  #
+    padded_seq_batch = torch.nn.utils.rnn.pad_sequence(temp, batch_first=True)
+    padded_obs = padded_seq_batch
+    lengths = done_indices - np.roll(done_indices, 1)
+    lengths[0] = done_indices[0] + 1
+    return padded_obs, lengths
 
 
 def calc_gaes(rewards, values, terminated, discount_factor=0.99, decay=0.9):
@@ -14,14 +63,11 @@ def calc_gaes(rewards, values, terminated, discount_factor=0.99, decay=0.9):
     Return the General Advantage Estimates from the given rewards and values.
     Paper: https://arxiv.org/pdf/1506.02438.pdf
     """
-    device = rewards.device
-
-    next_values = torch.cat([values[1:], torch.zeros(1, device=device)])
-
+    next_values = np.concatenate([values[1:], np.zeros(1)])
     td = rewards + discount_factor * (next_values) * (1 - terminated)
     deltas = td - values
 
-    gaes = torch.zeros_like(deltas, device=device)
+    gaes = np.zeros_like(deltas).astype(np.float32)
     gaes[-1] = rewards[-1]
 
     for i in reversed(range(len(deltas) - 1)):
@@ -30,7 +76,7 @@ def calc_gaes(rewards, values, terminated, discount_factor=0.99, decay=0.9):
         )
         # warmup_td[i] = rewards[i] + discount_factor * warmup_td[i+1] * (1 - terminated[i])
 
-    return gaes, td
+    return gaes.astype(np.float32), td.astype(np.float32)
 
 
 def calc_returns(rewards, terminated, discount_factor=0.99):
@@ -192,10 +238,10 @@ class ObsWrapper:
         for k, v in data.items():
             if torch.is_tensor(v):
                 self.obj_constructor = torch.tensor
-                v = torch.atleast_1d(v)
+                v = torch.atleast_1d(v).float()
             else:
                 self.obj_constructor = np.array
-                v = np.array(v, ndmin=1)
+                v = np.array(v, ndmin=1).astype(np.float32)
 
             self.data[k] = v
             len_v = len(self.data[k])
@@ -220,9 +266,9 @@ class ObsWrapper:
                 res.append(obs[k])
             is_tensor = torch.is_tensor(obs_list[0][k])
             if is_tensor:
-                res = torch.cat(res)
+                res = torch.cat(res).float()
             else:
-                res = np.concatenate(res)
+                res = np.concatenate(res).astype(np.float32)
 
             self.data[k] = res
             self.shape[k] = res.shape
@@ -239,14 +285,14 @@ class ObsWrapper:
         # get class in a generic way
         if torch.is_tensor(obs_list[0]):
             self.obj_constructor = torch.tensor
-            res = self.obj_constructor(obs_list)
+            res = self.obj_constructor(obs_list).float()
         elif type(obs_list[0]) == dict:
             v = {k: [dic[k] for dic in obs_list] for k in obs_list[0]}
             return self.init_from_dict(v, keep_dims=False, tensors=False)
 
         else:
             self.obj_constructor = np.array
-            res = self.obj_constructor(obs_list)
+            res = self.obj_constructor(obs_list).astype(np.float32)
             if len(res.shape) == 1:
                 res = res.reshape(res.shape[0], 1).astype(np.float32)
 
@@ -330,20 +376,14 @@ class ObsWrapper:
         if type(key) is str:
             return self.data[key]
         temp_dict = {}
-
         for k, v in self.data.items():
             if np.issubdtype(type(key), np.integer):
                 temp_dict[k] = (
-                    v.__getitem__(key)
-                    .clone()
-                    .detach()
-                    .requires_grad_(True)
-                    .unsqueeze(-1)
-                    .float()
+                    v.__getitem__(key).clone().detach().requires_grad_(False).float()
                 )
             else:
                 temp_dict[k] = (
-                    v.__getitem__(key).clone().detach().requires_grad_(True).float()
+                    v.__getitem__(key).clone().detach().requires_grad_(False).float()
                 )
         return ObsWrapper(temp_dict, tensors=True)
 
@@ -468,6 +508,24 @@ class ObsWrapper:
             temp_dict[k] = v.squeeze(dim)
         return ObsWrapper(temp_dict, keep_dims=True, tensors=True)
 
+    def flatten(self, start_dim=None, env_dim=None):
+        """
+        Args:
+            dim: The device to put the tensors on
+        Returns:
+            The object as tensors
+        """
+        temp_dict = {}
+
+        try:
+            for k, v in self.data.items():
+                temp_dict[k] = v.flatten(start_dim, env_dim)
+        except TypeError:
+            raise Exception(
+                "flatten with dims, not supported for ObsWrapper that is not torch.tensor"
+            )
+        return ObsWrapper(temp_dict, keep_dims=True, tensors=True)
+
     def get_as_tensors(self, device):
         """
         Args:
@@ -484,7 +542,7 @@ class ObsWrapper:
 
         return ObsWrapper(temp_dict, keep_dims=True, tensors=True)
 
-    def to(self, device):
+    def to(self, device, non_blocking=False):
         """
         Args:
             device: The device to put the tensors on
@@ -492,9 +550,28 @@ class ObsWrapper:
             The object as tensors
         """
         temp_dict = {}
+
         for k, v in self.data.items():
-            temp_dict[k] = v.to(device)
+            temp_dict[k] = v.to(device, non_blocking=non_blocking)
         return ObsWrapper(temp_dict, keep_dims=True, tensors=True)
+
+    def stack(obs_wrapper_list: list):
+        """
+        stack a list of objects
+        """
+        keys = list(obs_wrapper_list[0].keys())
+        obs_dict = {}
+        for k in keys:
+            res = []
+            for obs in obs_wrapper_list:
+                res.append(obs[k])
+            is_tensor = torch.is_tensor(obs_wrapper_list[0][k])
+            if is_tensor:
+                res = torch.stack(res)
+            else:
+                res = np.stack(res)
+            obs_dict[k] = res
+        return ObsWrapper(obs_dict)
 
     def cat(self, other, axis=0):
         """
@@ -530,688 +607,182 @@ class ObsWrapper:
             return ObsWrapper(temp_dict)
 
 
-class ExperienceReplay:
-    # TODO: support continous infinte env by removeing long seeing states without dones
+from abc import ABC
+
+
+class IData(ABC):
     """
-    A class for storing expriences and sampling from them
+    An abstract class for agents data
+    """
+
+    def __init__(self, dataset: Dataset, prepare_for_rnn):
+        """
+        Args:
+            dataset: The dataset to use
+            prepare_for_rnn: Whether to prepare the data for RNN
+
+        """
+        self.dataset = dataset
+        self.prepare_for_rnn = prepare_for_rnn
+        self.can_shuffle = False if self.prepare_for_rnn else True
+
+    def get_dataloader(self, batch_size, shuffle, num_workers):
+        """
+        Args:
+            batch_size: The batch size
+            shuffle: Whether to shuffle the data
+            num_workers: The number of workers
+        Returns:
+            A DataLoader object
+        """
+        if not self.can_shuffle and shuffle == True:
+            logging.warning(
+                "Shuffle is not allowed when preparing data for RNN, changing shuffle to False"
+            )
+            shuffle = False
+
+        return DataLoader(
+            self.dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=num_workers,
+            pin_memory=True,
+            collate_fn=self.dataset.collate_fn,
+        )
+
+
+class LambdaDataset(Dataset):
+    """
+    A dataset class for general purposes
     """
 
     def __init__(
         self,
-        capacity: float,
-        obs_shape: dict,
-        n_actions: int,
-        prioritize_high_reward=False,
+        obs_collection: tuple[ObsWrapper],
+        tensor_collection: tuple[torch.tensor],
+        dones: torch.tensor,
+        prepare_for_rnn: bool,
     ):
         """
         Args:
-            capacity: The max number of samples to store
-            obs_shape: The shape of the obs
-            n_actions: The number of actions
+            obs_collection: The observation collection
+            tensor_collection: The tensor collection
+            dones: The dones tensor
+            prepare_for_rnn: Whether to prepare the data for RNN
+
         """
-        self.obs_shape = ObsShapeWraper(obs_shape)
-        self.n_actions = n_actions
-        self.capacity = capacity
-        self.init_buffers()
-        self.continous_mem = False
-        self.prioritize_high_reward = prioritize_high_reward
+        obs_collection, tensor_collection, dones = self._prepare_data(
+            obs_collection, tensor_collection, dones
+        )
+        self.obs_collection = obs_collection
+        self.tensor_collection = tensor_collection
+        self.dones = dones
+        self.loss_flag = torch.ones_like(dones).bool()
+        self.prepare_for_rnn = prepare_for_rnn
+        self.num_items = len(dones)
+        if self.prepare_for_rnn:
+            (
+                self.obs_collection,
+                self.tensor_collection,
+                self.dones,
+                self.loss_flag,
+                lengths,
+            ) = self._pad_experiecne(self.obs_collection, self.tensor_collection, dones)
+            self.num_items = (
+                lengths.max()
+            )  # 16 games , 200 sequential history, *obs_shape
 
     def __len__(self):
-        """
-        Returns:
-            The current number of samples in the memory
-        """
-        return self.curr_size
+        return self.num_items
 
-    def append(
-        self,
-        curr_obs: ObsWrapper,
-        actions: np.array,
-        rewards: np.array,
-        dones: np.array,
-        truncateds: np.array,
-    ):
+    def _prepare_data(self, obs_collection, tensor_collection, dones):
         """
-        Appends a new sample to the memory
+        Prepares the data for the dataset in form of tensors
         Args:
-            curr_obs: The current observations
-            actions: The action taken
-            rewards: The reward recieved
-            dones: Whether the episode is done
+            obs_collection: The observation collection
+            tensor_collection: The tensor collection
+            dones: The dones tensor
+
+        Returns:
+            The prepared data
+
         """
-        # extra_exps
-        actions = np.array(actions).reshape(-1, self.n_actions)
+        obs_collection = [obs.get_as_tensors("cpu") for obs in obs_collection]
+        tensor_collection = [torch.from_numpy(tensor) for tensor in tensor_collection]
+        dones = torch.from_numpy(dones)
+        return obs_collection, tensor_collection, dones
 
-        curr_obs = ObsWrapper(curr_obs)
-
-        num_samples = len(curr_obs)
-
-        free_space = self.capacity - self.curr_size
-        if num_samples > self.capacity:
-            self.curr_size = 0
-            curr_obs = curr_obs[: self.capacity]
-            actions = actions[: self.capacity]
-            rewards = rewards[: self.capacity]
-            dones = dones[: self.capacity]
-            truncateds = truncateds[: self.capacity]
-            dones[-1] = True
-            truncateds[-1] = True
-            num_samples = self.capacity
-            self.episode_start_indices = self.get_episode_start_indices()
-
-        elif self.curr_size + num_samples > self.capacity and not self.continous_mem:
-            done_indices = self.get_episode_end_indices()
-            relevant_dones = np.where(done_indices > num_samples - free_space)[0]
-            # roll more then memory needed:
-
-            relevant_index = relevant_dones[len(relevant_dones) // 2]
-            done_index = done_indices[relevant_index]
-            self.all_buffers[self.states_index] = self.all_buffers[
-                self.states_index
-            ].np_roll(-done_index - 1, inplace=False)
-            self.all_buffers[self.actions_index] = np.concatenate(
-                [
-                    self.all_buffers[self.actions_index][-(-done_index - 1) :],
-                    np.zeros_like(
-                        self.all_buffers[self.actions_index][: -(-done_index - 1)]
-                    ),
-                ]
-            )
-            self.all_buffers[self.reward_index] = np.concatenate(
-                [
-                    self.all_buffers[self.reward_index][-(-done_index - 1) :],
-                    np.zeros_like(
-                        self.all_buffers[self.reward_index][: -(-done_index - 1)]
-                    ),
-                ]
-            )
-            self.all_buffers[self.dones_index] = np.concatenate(
-                [
-                    self.all_buffers[self.dones_index][-(-done_index - 1) :],
-                    np.zeros_like(
-                        self.all_buffers[self.dones_index][: -(-done_index - 1)]
-                    ),
-                ]
-            )
-            self.all_buffers[self.truncated_index] = np.concatenate(
-                [
-                    self.all_buffers[self.truncated_index][-(-done_index - 1) :],
-                    np.zeros_like(
-                        self.all_buffers[self.truncated_index][: -(-done_index - 1)]
-                    ),
-                ]
-            )
-            self.sampled_episodes_count = np.concatenate(
-                [
-                    self.sampled_episodes_count[-(-done_index - 1) :],
-                    np.ones_like(self.sampled_episodes_count[: -(-done_index - 1)]),
-                ]
-            )
-            self.curr_size -= done_index + 1
-
-        self.all_buffers[self.states_index][
-            self.curr_size : self.curr_size + num_samples
-        ] = curr_obs
-        self.all_buffers[self.actions_index][
-            self.curr_size : self.curr_size + num_samples
-        ] = actions
-        self.all_buffers[self.reward_index][
-            self.curr_size : self.curr_size + num_samples
-        ] = rewards
-        self.all_buffers[self.dones_index][
-            self.curr_size : self.curr_size + num_samples
-        ] = dones
-        self.all_buffers[self.truncated_index][
-            self.curr_size : self.curr_size + num_samples
-        ] = truncateds
-
-        self.curr_size += num_samples
-
-    def init_buffers(self):
+    def _pad_experiecne(self, obs_collection, tensor_collection, dones):
         """
-        Initializes the buffers
+        Pads the experience for RNN
+        Args:
+            obs_collection: The observation collection
+            tensor_collection: The tensor collection
+            dones: The dones tensor
+
+        Returns:
+            The padded experience and loss flag
+            loss flag is a tensor of ones where the data are not padded
         """
-        self.sampled_episodes_count = np.ones(((self.capacity, 1)), dtype=np.float32)
-        self.curr_size = 0
-        try:
-            actions_buffer = np.zeros(
-                ((self.capacity, self.n_actions)), dtype=np.float32
-            )  # .squeeze(-1)
-        except:
-            actions_buffer = np.zeros(
-                ((self.capacity, self.n_actions)), dtype=np.float32
-            )
-        reward_buffer = np.zeros((self.capacity), dtype=np.float32)
-        dones_buffer = np.zeros((self.capacity), dtype=np.uint8)
-        truncated_buffer = np.zeros((self.capacity), dtype=np.uint8)
-        shape = (self.capacity, *self.obs_shape)
 
-        states_buffer = ObsWrapper()
-        for k in self.obs_shape:
-            shape = (self.capacity, *self.obs_shape[k])
-            states_buffer[k] = np.zeros(shape, dtype=np.float32)
-
-        self.all_buffers = [
-            states_buffer,
-            actions_buffer,
-            reward_buffer,
-            dones_buffer,
-            truncated_buffer,
+        obs_collection = [
+            pad_states_from_done_indices(obs, dones)[0] for obs in obs_collection
         ]
-
-        self.states_index = 0
-        self.actions_index = 1
-        self.reward_index = 2
-        self.dones_index = 3
-        self.truncated_index = 4
-
-    def clear(self):
-        """
-        Clears the memory
-        """
-        self.init_buffers()
-
-    def get_episodes_accumulated_rewards(self):
-        end_indices = self.get_episode_end_indices()
-        summed_r = np.cumsum(self.all_buffers[self.reward_index])
-        first_ep_r = summed_r[end_indices[0]]
-        summed_r = summed_r[end_indices] - np.roll(summed_r[end_indices], 1)
-        summed_r[0] = first_ep_r
-        return summed_r
-
-    def get_episode_end_indices(self):
-        return np.where(self.all_buffers[self.dones_index] == True)[0]
-
-    def get_episode_start_indices(self):
-        episode_indices = [0]
-        episode_indices.extend(self.get_episode_end_indices() + 1)
-        return episode_indices[:-1]
-
-    def get_num_samples_of_k_first_episodes(self, num_episodes):
-        episode_indices = self.get_episode_start_indices()
-        assert (
-            len(episode_indices) >= num_episodes
-        ), "requested more episodes then actual stored in mem"
-        # it is a "False" done just for episode begin idx
-        num_samples = episode_indices[num_episodes] + 1
-        return num_samples
-
-    def get_num_samples_of_k_last_episodes(self, num_episodes):
-        episode_indices = [0]
-        episode_indices.extend(
-            self.get_episode_end_indices()
-        )  # last episode indx is done =1
-        assert (
-            len(episode_indices) >= num_episodes
-        ), "requested more episodes then actual stored in mem"
-        # it is a "False" done just for episode begin idx
-        if episode_indices[-num_episodes - 1] == 0:
-            num_samples = self.curr_size - episode_indices[-num_episodes - 1]
-        else:  # we dont want the last done in our batch
-            num_samples = (
-                self.curr_size - episode_indices[-num_episodes - 1] - 1
-            )  # exclude done indice
-        return num_samples
-
-    def get_last_episodes(self, num_episodes):
-        """
-        Args:
-            num_episodes: The number of episodes to return
-        Returns:
-            all last episode samples, or specified num samples
-        """
-        num_samples = self.get_num_samples_of_k_last_episodes(num_episodes)
-        return self.get_last_samples(num_samples)
-
-    def get_first_episodes(self, num_episodes):
-        """
-        Args:
-            num_episodes: The number of episodes to return
-        Returns:
-            all last episode samples, or specified num samples
-        """
-        num_samples = self.get_num_samples_of_k_first_episodes(num_episodes)
-        return self.get_first_samples(num_samples)
-
-    def get_first_samples(self, num_samples):
-        """return all last episode samples, or specified num samples"""
-        assert (
-            num_samples <= self.curr_size
-        ), "requested more samples then actual stored in mem"
-        last_samples = [buff[:num_samples] for buff in self.all_buffers]
-        # Add next_obs:
-        last_samples.append(
-            self.all_buffers[self.states_index][:num_samples].np_roll(-1, inplace=False)
-        )
-        return last_samples
-
-    def get_last_samples(self, num_samples=None):
-        """return all last episode samples, or specified num samples"""
-
-        if num_samples is None:
-            "return last episode"
-
-            dones = self.get_episode_end_indices()
-            if len(dones) > 1:
-                # exclude the latest done sample
-                first_sample_idx = dones[-2] + 1  # extra_exps
-
-            else:
-                # from 0 index to last done(which is also the first..)
-                first_sample_idx = 0
-                last_samples = [
-                    buff[first_sample_idx : self.curr_size] for buff in self.all_buffers
-                ]
-
-        else:
-            first_sample_idx = self.curr_size - num_samples
-            last_samples = [
-                buff[first_sample_idx : self.curr_size] for buff in self.all_buffers
-            ]
-
-        # Add next_obs:
-        last_samples.append(
-            self.all_buffers[self.states_index][
-                first_sample_idx : self.curr_size
-            ].np_roll(-1, inplace=False)
-        )
-
-        return last_samples
-
-    def get_all_buffers(self):
-        """
-        Returns:
-            All the buffers
-        """
-        buffers = copy.deepcopy(self.all_buffers)
-        next_obs = buffers[self.states_index].np_roll(-1, inplace=False)
-
-        buffers.append(next_obs)
-        return buffers
-
-    def get_buffers_at(self, indices):
-        """
-        Args:
-            indices: The indices to return
-        Returns:
-            The buffers at the given indices
-        """
-        buffers = self.get_all_buffers()
-        buffers_at = (
-            buffers[0][indices],
-            buffers[1][indices],
-            buffers[2][indices],
-            buffers[3][indices],
-            buffers[4][indices],
-            buffers[5][indices],
-        )
-        return buffers_at
-
-    def sample_random_episodes(self, num_episodes: int):
-        """
-        Args:
-            num_episodes: The number of full episodes to return
-        Returns:
-            A batch ofrandom episodes samples
-        """
-
-        ###
-
-        cumsum = self.get_episodes_accumulated_rewards()
-        moved_cumsum = cumsum + np.abs(cumsum.min())
-        moved_cumsum = moved_cumsum / (moved_cumsum.max() + 1e-3)
-        reward_rank = 10 - moved_cumsum * 10
-
-        ###
-
-        end_done_indices = self.get_episode_end_indices()
-        start_indices = self.get_episode_start_indices()
-        stored_episodes = len(end_done_indices)
-
-        weights = 1 / (
-            self.sampled_episodes_count[start_indices].squeeze() + reward_rank
-        )
-        weights = weights / weights.sum()  # np.exp(weights)/np.exp(weights).sum()
-        chosen_episodes_indices = np.random.choice(
-            stored_episodes, num_episodes, replace=False, p=weights.flatten()
-        )
-        episoed_indices = []
-        for i in chosen_episodes_indices:
-            s = start_indices[i]
-            e = end_done_indices[i]
-            episoed_indices.append(np.arange(s, e + 1))  # to inclode the done also
-            self.sampled_episodes_count[s] += 10  # reward_rank[i]
-        return self.get_buffers_at(np.concatenate(episoed_indices).astype(np.int32))
-
-    def sample_random_batch(self, sample_size):
-        """
-        Args:
-            sample_size: The number of samples to return
-        Returns:
-            A random batch of samples
-        """
-        sample_size = min(sample_size, self.curr_size)
-        indices = np.random.choice(self.curr_size, sample_size, replace=False)
-        return self.get_buffers_at(indices)
-
-
-class ForgettingExperienceReplay(ExperienceReplay):
-    """
-    This class is used to store and sample experience, it forgets old experience in every append.
-    """
-
-    def __init__(self, capacity, obs_shape, continous_mem=False):
-        """
-        Args:
-            capacity: The capacity of the replay buffer.
-            obs_shape: The shape of the observations.
-            continous_mem: If true, the replay buffer will be continous, meaning that the oldest samples will be overwritten.
-        """
-        super().__init__(capacity, obs_shape, continous_mem)
-
-    def init_buffers(self):
-        """
-        Initializes the buffers.
-        """
-        super().init_buffers()
-
-    def append(
-        self,
-        curr_obs: ObsWrapper,
-        actions: np.array,
-        rewards: np.array,
-        dones: np.array,
-        truncateds: np.array,
-    ):
-        """
-        Appends a new sample to the memory.
-        Args:
-            curr_obs: The current observations.
-            actions: The action taken.
-            rewards: The reward recieved.
-            dones: Whether the episode is done.
-        """
-
-        num_samples = len(curr_obs)
-        self.num_episodes_added = sum(dones)
-        curr_obs = ObsWrapper(curr_obs)
-        self.all_buffers[self.states_index] = (
-            curr_obs  # np.array(curr_obs).astype(np.float32)
-        )
-        self.all_buffers[self.actions_index] = np.array(actions).astype(np.float32)
-        self.all_buffers[self.reward_index] = np.array(rewards).astype(np.float32)
-        self.all_buffers[self.dones_index] = np.array(dones).astype(np.float32)
-        self.all_buffers[self.truncated_index] = np.array(truncateds).astype(np.float32)
-        self.curr_size = num_samples
-
-    def get_last_episodes(self, num_episodes):
-        """return all last episode samples, or specified num samples"""
-        return self.get_all_buffers()
-
-
-def worker(env, conn):
-    """
-    This function is used to run an environment in a separate process.
-    Args:
-        env: The environment to run.
-        conn: The connection to the main process.
-    """
-    proc_running = True
-
-    done = False
-
-    while proc_running:
-        cmd, msg = conn.recv()
-
-        if cmd == "step":
-            if done:
-                next_state, _ = env.reset()
-
-            next_state, reward, terminated, truncated, _ = env.step(msg)
-            conn.send((next_state, reward, terminated, truncated, _))
-            done = terminated or truncated
-            if done:
-                next_state = env.reset()
-
-        elif cmd == "reset":
-            conn.send(env.reset())
-
-        elif cmd == "get_env":
-            conn.send(env)
-
-        elif cmd == "close":
-            proc_running = False
-            return
-
-        elif cmd == "change_env":
-            env = msg
-            gc.collect()
-            done = False
-        else:
-            raise Exception("Command not implemented")
-
-
-class ParallelEnv:
-    """
-    This class is used to run multiple environments in parallel.
-    """
-
-    def __init__(self, env: gym.Env, num_envs: int):
-        """
-        Args:
-            env: The environment to run in parallel.
-            num_envs: The number of environments to run in parallel.
-            for_val: If true, the environments will be run in a fixed order to allow for deterministic evaluation.
-        """
-        self.num_envs = num_envs
-        if num_envs > 1:
-            self.p_env = ParallelEnv_m(env, num_envs)
-        else:
-            self.p_env = SingleEnv_m(env)
-
-    def __del__(self):
-        self.p_env.close_procs()
-
-    def change_env(self, env):
-        """
-        Changes the environment to run in parallel.
-        Args:
-            env: The new environment.
-        """
-        self.p_env.change_env(env)
-
-    def get_envs(self):
-        """
-        Returns:
-            A list of the environments.
-        """
-        return self.p_env.get_envs()
-
-    def reset(self):
-        """
-        Resets the environments.
-        """
-        return self.p_env.reset()
-
-    def step(self, actions):
-        """
-        Takes a step in the environments.
-        Args:
-            actions: The actions (n, action_shape) to take in the environments.
-        """
-        return self.p_env.step(actions)
-
-    def close_procs(self):
-        """
-        Closes the processes.
-        """
-        self.p_env.close_procs()
-
-    def render(self):
-        """
-        Renders the environments. - not supported for multi envs - renders just the base env - good for single env case
-        """
-        self.p_env.render()
-
-
-class ParallelEnv_m:
-    def __init__(self, env, num_envs):
-        """
-        Args:
-            env: The environment to run in parallel.
-            num_envs: The number of environments to run in parallel.
-            for_val: If true, the environments will be run in a fixed order to allow for deterministic evaluation.
-        """
-        self.num_envs = num_envs
-        self.process = namedtuple(
-            "Process", field_names=["proc", "connection", "worker_conn"]
-        )
-        self.comm = []
-        for idx in range(self.num_envs):
-            parent_conn, worker_conn = Pipe()
-            proc = Process(target=worker, args=((copy.deepcopy(env)), worker_conn))
-            proc.start()
-            self.comm.append(self.process(proc, parent_conn, worker_conn))
-
-    def change_env(self, env):
-        """
-        Changes the environment to run in parallel.
-        Args:
-            env: The new environment.
-        """
-        [p.connection.send(("change_env", copy.deepcopy(env))) for p in self.comm]
-
-    def get_envs(self):
-        """
-        Returns:
-            A list of the environments.
-        """
-        [p.connection.send(("get_env", "")) for p in self.comm]
-        res = [p.connection.recv() for p in self.comm]
-        return res
-
-    def reset(self):
-        """
-        Resets the environments.
-        """
-        [p.connection.send(("reset", "")) for p in self.comm]
-        res = [p.connection.recv() for p in self.comm]
-        return res
-
-    def step(self, actions):
-        """
-        Takes a step in the environments.
-        Args:
-            actions: The actions (n, action_shape) to take in the environments.
-        """
-        # send actions to envs
-        [
-            p.connection.send(("step", action))
-            for i, p, action in zip(range(self.num_envs), self.comm, actions)
+        tensor_collection = [
+            pad_tensors_from_done_indices(tensor, dones)[0]
+            for tensor in tensor_collection
         ]
+        loss_flag, lengths = pad_tensors_from_done_indices(
+            torch.ones_like(dones), dones
+        )
+        loss_flag = loss_flag.bool()
+        dones, lengths = pad_tensors_from_done_indices(dones, dones)
+        return (
+            obs_collection,
+            tensor_collection,
+            dones,
+            loss_flag,
+            lengths,
+        )
 
-        # Receive response from envs.
-        res = [p.connection.recv() for p in self.comm]
-        next_states, rewards, terminated, truncated, _ = zip(*res)
-        rewards = np.array(rewards)
-        terminated = np.array(terminated)
-        truncated = np.array(truncated)
-        _ = np.array(_)
-
-        return next_states, rewards, terminated, truncated, _
-
-    def render(self):
-        print("Cant draw parallel envs [WIP]")
-
-    def __del__(self):
-        self.close_procs()
-
-    def close_procs(self):
-        """
-        Closes the processes.
-        """
-        for p in self.comm:
-            try:
-                p.connection.send(("close", ""))
-                p.connection.close()
-                p.worker_conn.close()
-            except Exception as e:
-                print("close failed", p)
-                print("close failed -reason:", e)
-                pass
-        self.comm = []
-
-
-class SingleEnv_m:
-    """
-    This class is used to run a single environment.
-    """
-
-    def __init__(self, env):
-        """
-        Args:
-            env: The environment to run in parallel.
-        """
-        # print(env.game_index)
-        self.env = copy.deepcopy(env)
-        self.num_envs = 1
-
-    def change_env(self, env):
-        """
-        Changes the environment to run.
-        """
-        self.env = env
-
-    def get_envs(self):
-        """
-        Returns:
-            A list of the environments - list with single item in this case.
-        """
-        return [self.env]
-
-    def reset(self):
-        """
-        Resets the environment.
-        """
-        s, info = self.env.reset()
-        if type(s) != dict:
-            return [(np.array(s, ndmin=1), info)]
+    def __getitems__(self, idx):
+        if self.prepare_for_rnn:
+            obs_collection = [obs[:, idx] for obs in self.obs_collection]
+            tensor_collection = [tensor[:, idx] for tensor in self.tensor_collection]
+            dones = self.dones[:, idx]
+            loss_flag = self.loss_flag[:, idx].squeeze(0)
         else:
-            return [(s, info)]
+            obs_collection = [obs[idx] for obs in self.obs_collection]
+            tensor_collection = [tensor[idx] for tensor in self.tensor_collection]
+            dones = self.dones[idx]
+            loss_flag = self.loss_flag[idx].squeeze(0)
 
-    def step(self, actions):
-        """
-        Takes a step in the environment.
-        Args:
-            actions: The actions (1, action_shape) to take in the environment.
-        """
-        action = None
-        try:
-            iter(actions)
-            action = actions[0]
-        except TypeError:
-            action = actions
-        next_states, rewards, terminated, trunc, _ = self.env.step(action)
-        if type(next_states) != dict:
-            next_states = np.array(next_states, ndmin=2)
-        else:
-            next_states = [next_states]
-        rewards = np.array(rewards, ndmin=1)
-        terminated = np.array(terminated, ndmin=1)
-        trunc = np.array(trunc, ndmin=1)
-        return next_states, rewards, terminated, trunc, _
+        return (
+            obs_collection,
+            tensor_collection,
+            dones,
+            loss_flag,
+        )
 
-    def render(self):
-        """
-        Renders the environment.
-        """
-        self.env.render()
+    def __getitem__(self, idx):
+        return self.__getitems__(idx)
 
-    def close_procs(self):
-        """
-        Closes the processes[actually is a noop in this case].
-        """
-        pass
+    def collate_fn(self, batch):
+        return batch
+
+
+class LambdaData(IData):
+    def __init__(
+        self,
+        obs_collection: tuple[ObsWrapper],
+        tensor_collection: tuple[torch.tensor],
+        dones: torch.tensor,
+        prepare_for_rnn: bool,
+    ) -> None:
+        dataset = LambdaDataset(
+            obs_collection, tensor_collection, dones, prepare_for_rnn
+        )
+        super().__init__(dataset, prepare_for_rnn)
 
 
 import pandas as pd

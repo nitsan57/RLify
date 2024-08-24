@@ -1,4 +1,3 @@
-from attr import dataclass
 from tqdm import tqdm
 from abc import ABC, abstractmethod
 import gymnasium as gym
@@ -7,9 +6,11 @@ from rlify.agents.explorers import Explorer, RandomExplorer
 import numpy as np
 import functools
 import operator
-from .agent_utils import ParallelEnv, TrainMetrics
+from .agent_utils import TrainMetrics, calc_returns
+from rlify.environments.env_utils import ParallelEnv
 import torch
-from .agent_utils import ExperienceReplay, ObsShapeWraper, ObsWrapper
+from .agent_utils import ObsShapeWraper, ObsWrapper
+from rlify.agents.experience_replay import ExperienceReplay
 import uuid
 import logging
 import pandas as pd
@@ -17,6 +18,7 @@ from torch.utils.tensorboard import SummaryWriter
 from munch import Munch
 import os
 import pygame
+
 
 logger = logging.getLogger(__name__)
 import datetime
@@ -35,7 +37,6 @@ class RL_Agent(ABC):
         self,
         obs_space: gym.spaces,
         action_space: gym.spaces,
-        max_mem_size: int = int(10e6),
         batch_size: int = 256,
         explorer: Explorer = RandomExplorer(),
         num_parallel_envs: int = 4,
@@ -43,34 +44,40 @@ class RL_Agent(ABC):
         lr: float = 3e-4,
         device: str = None,
         experience_class: object = ExperienceReplay,
+        max_mem_size: int = int(10e6),
         discount_factor: float = 0.99,
         reward_normalization=True,
         tensorboard_dir: str = "./tensorboard",
+        dataloader_workers: int = 0,
+        # accumulate_gradients_per_epoch: bool = None, # future api
     ) -> None:
         """
 
         Args:
             obs_space (gym.spaces): observation space of the environment
             action_space (gym.spaces): action space of the environment
-            max_mem_size (int, optional): maximum size of the experience replay buffer. Defaults to 10e6.
             batch_size (int, optional): batch size for training. Defaults to 256.
             explorer (Explorer, optional): exploration method. Defaults to RandomExplorer().
-            num_parallel_envs (int, optional): number of parallel environments. Defaults to 4.
+            num_parallel_envs (int): number of parallel environments. Defaults to 4.
             num_epochs_per_update (int): Training epochs per update. Defaults to 10.
             lr (float, optional): learning rate. Defaults to 0.0001.
             device (torch.device, optional): device to run on. Defaults to None.
-            experience_class (object, optional): experience replay class. Defaults to ExperienceReplay.\
+            experience_class (object, optional): experience replay class. Defaults to ExperienceReplay.
+            max_mem_size (int, optional): maximum size of the experience replay buffer. Defaults to 10e6.
             discount_factor (float, optional): discount factor. Defaults to 0.99.
             reward_normalization (bool, optional): whether to normalize the rewards by maximum absolut value. Defaults to True.
             tensorboard_dir (str, optional): tensorboard directory. Defaults to './tensorboard'.
+            dataloader_workers (int, optional): number of workers for the dataloader. Defaults to 0.
+            accumulate_gradients_per_epoch (bool, optional): whether to update the model every epoch or every batch. Defaults to None \
+                - when None is set in reccurent models it will be set to True, and in normal models it will be set to False
             
         """
         super(RL_Agent, self).__init__()
-
+        self.dataloader_workers = dataloader_workers
         self.id = uuid.uuid4()
         self.init_tb_writer(tensorboard_dir)
         self.num_epochs_per_update = num_epochs_per_update
-
+        self.accumulate_gradients_per_epoch = False  # future api
         self.env = None
         self.r_func = lambda s, a, r: r
         self.explorer = explorer
@@ -78,26 +85,52 @@ class RL_Agent(ABC):
         self.obs_mean = None
         self.obs_std = None
         self.reward_normalization = reward_normalization
-        self.max_reward = 0
+        self.max_return = 0
 
         self.obs_space = obs_space
         self.obs_shape = ObsShapeWraper(obs_space)  # obs_shape
         self.discount_factor = discount_factor
         self.batch_size = batch_size
-        self.num_parallel_envs = (
-            batch_size if num_parallel_envs is None else num_parallel_envs
-        )
-
+        self.set_num_parallel_env(num_parallel_envs)
         self.device = (
             device if device is not None else utils.init_torch()
         )  # default goes to cuda -> cpu' or enter manualy
 
         self.lr = lr
         self.define_action_space(action_space)
-        self.setup_models()
+        models = self.setup_models()
+        self.validate_models(models)
+        if self.contains_reccurent_nn() and self.accumulate_gradients_per_epoch is None:
+            self.accumulate_gradients_per_epoch = True
         self.experience = experience_class(max_mem_size, self.obs_shape, self.n_actions)
 
         self.metrics = TrainMetrics()
+
+    def get_train_batch_size(self):
+        """
+        Returns batch_size on normal NN
+        Returns ceil(batch_size / num_parallel_envs) on RNN
+        """
+        if self.contains_reccurent_nn():
+            return self.rnn_batch_size
+        return self.batch_size
+
+    def contains_reccurent_nn(self):
+        return self.rnn_models
+
+    def validate_models(self, models):
+        self.rnn_models = False
+        assert (
+            models is not None
+        ), "setup_models should return a list of models, or empty list"
+        is_rnn_list = []
+        for m in models:
+            is_rnn_list.append(m.is_rnn)
+        if len(is_rnn_list) > 0:
+            assert (
+                np.array(is_rnn_list) == is_rnn_list[0]
+            ).all(), "all models should have the same rnn status - either all reccurent, or either all not reccurent"
+            self.rnn_models = is_rnn_list[0]
 
     def init_tb_writer(self, tensorboard_dir: str = None):
         """
@@ -130,14 +163,14 @@ class RL_Agent(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def setup_models(self):
+    def setup_models(self) -> list[torch.nn.Module]:
         """
         Initializes the NN models
         """
         raise NotImplementedError
 
     @abstractmethod
-    def update_policy(self, *exp):
+    def update_policy(self, trajectories_dataset):
         """
         Updates the models and according to the agnets logic
         """
@@ -262,7 +295,6 @@ class RL_Agent(ABC):
         self.obs_shape = checkpoint["obs_shape"]
         self.discount_factor = checkpoint["discount_factor"]
         self.define_action_space(self.action_space)
-
         self.setup_models()
         return checkpoint
 
@@ -271,6 +303,7 @@ class RL_Agent(ABC):
         """
         sets the agent to train mode - all models are set to train mode
         """
+        self.training = True
         self.reset_rnn_hidden()
 
     @abstractmethod
@@ -278,8 +311,30 @@ class RL_Agent(ABC):
         """
         sets the agent to train mode - all models are set to eval mode
         """
+        self.training = False
         self.reset_rnn_hidden()
 
+    def gracefully_close_envs(func):
+        """
+        A decorator that closes the environment processes in case of an exception
+
+        Args:
+            func: the function to wrap
+
+        Returns:
+            the wrapped function
+        """
+
+        def wrapper(self, *args, **kwargs):
+            try:
+                return func(self, *args, **kwargs)
+            except Exception as ex:
+                self.close_env_procs()
+                raise ex
+
+        return wrapper
+
+    @gracefully_close_envs
     def train_episodial(
         self,
         env: gym.Env,
@@ -309,6 +364,7 @@ class RL_Agent(ABC):
         )
         return train_r
 
+    @gracefully_close_envs
     def train_n_steps(
         self,
         env: gym.Env,
@@ -394,7 +450,8 @@ class RL_Agent(ABC):
             i += collect_info[to_update_idx]
             ep_number += self.num_parallel_envs
             self.set_train_mode()
-            self.update_policy()
+            trajectory_data = self.get_trajectories_data()
+            self.update_policy(trajectory_data)
             self.metrics.on_epoch_end()
 
             for k in self.metrics:
@@ -409,6 +466,35 @@ class RL_Agent(ABC):
         self.close_env_procs()
         return pd.DataFrame(train_stats, index=range(len(train_stats["rewards"])))
 
+    @abstractmethod
+    def get_trajectories_data(self):
+        """
+        Returns the trajectories data
+        """
+        raise NotImplementedError
+
+    def criterion_using_loss_flag(self, func, arg1, arg2, loss_flag):
+        """
+        Applies the function using only where loss flag is true
+
+        Args:
+            func: the function to apply
+            arg1: the first argument
+            arg2: the second argument
+            loss_flag: the loss flag
+
+        Returns:
+            the result of the function
+        """
+        loss_flag = loss_flag.flatten()
+        return func(arg1.flatten()[loss_flag], arg2.flatten()[loss_flag])
+
+    def apply_regularization(self, reg_coeff, vector, loss_flag):
+        """
+        Applies the criterion to the arguments
+        """
+        return reg_coeff * (vector.flatten()[loss_flag.flatten()].mean())
+
     def set_num_parallel_env(self, num_parallel_envs):
         """
         Sets the number of parallel environments
@@ -416,10 +502,12 @@ class RL_Agent(ABC):
         Args:
             num_parallel_envs (int): number of parallel environments
         """
+        self.num_parallel_envs = num_parallel_envs
         assert (
             self.num_parallel_envs <= self.batch_size
         ), f"please provide batch_size>= num_parallel_envs current: {self.batch_size}, {num_parallel_envs},"
         self.num_parallel_envs = num_parallel_envs
+        self.rnn_batch_size = int(np.ceil(self.batch_size / num_parallel_envs))
 
     @abstractmethod
     def act(self, observations: np.array, num_obs: int = 1) -> np.array:
@@ -466,9 +554,7 @@ class RL_Agent(ABC):
         return observations
         return (observations - self.norm_params["mean"]) / self.norm_params["std"]
 
-    def pre_process_obs_for_act(
-        self, observations: [np.array, ObsWrapper, dict], num_obs: int
-    ):
+    def pre_process_obs_for_act(self, observations: ObsWrapper | dict, num_obs: int):
         """
         Pre processes the observations for act
 
@@ -487,6 +573,9 @@ class RL_Agent(ABC):
                 f"number of observations do not match real observation num obs: {num_obs}, vs real len: {len_obs}"
             )
         states = observations.get_as_tensors(self.device)
+        a_state_key = list(states.keys())[0]
+        if self.contains_reccurent_nn() and len(states[a_state_key].shape) == 2:
+            states = states.unsqueeze(1)
         return states
 
     def return_correct_actions_dim(self, actions: np.array, num_obs: int):
@@ -588,10 +677,8 @@ class RL_Agent(ABC):
         truncated = [[] for i in range(num_to_collect_in_parallel)]
 
         max_episode_steps = 0
-        time_to_act = 0
         while not all(env_dones):
             relevant_indices = np.where(env_dones == False)[0].astype(np.int32)
-
             if self.explorer.explore():
                 explore_action = self.explorer.act(
                     self.action_space, latest_observations, num_to_collect_in_parallel
@@ -609,7 +696,6 @@ class RL_Agent(ABC):
             # TODO DEBUG
             # allways use all envs to step, even some envs are done already
             next_obs, reward, terminated, trunc, info = self.env.step(current_actions)
-
             for i in relevant_indices:
                 actions[i].append(current_actions[i])
                 intrisic_reward = self.intrisic_reward_func(
@@ -643,10 +729,12 @@ class RL_Agent(ABC):
         truncated = functools.reduce(operator.iconcat, truncated, [])
 
         rewards_x = np.array(rewards_x).astype(np.float32)
-
-        self.max_reward = max(np.abs(rewards_x).max(), self.max_reward)
+        returns = calc_returns(
+            rewards_x, np.array(dones) * (1 - np.array(truncated)), self.discount_factor
+        )
+        self.max_return = max(np.abs(returns).max(), self.max_return)
         if self.reward_normalization:
-            rewards_x /= self.max_reward + 1e-4
+            rewards_x /= self.max_return + 1e-4
         self.experience.append(observations, actions, rewards_x, dones, truncated)
         self.reset_rnn_hidden()
         self.explorer.update()
@@ -676,6 +764,7 @@ class RL_Agent(ABC):
         """
         self.experience.clear()
 
+    @gracefully_close_envs
     def run_env(
         self, env: gym.Env, best_act: bool = True, num_runs: int = 1
     ) -> np.array:
@@ -720,47 +809,3 @@ class RL_Agent(ABC):
             "std": all_rewards.std(),
             "all_runs": all_rewards,
         }
-
-    def get_seqs_indices_for_pack(self, done_indices):
-        """
-        calculates the sequence indices for packing the data
-        returns seq_lens, sorted_data_sub_indices
-        """
-        env_indices = np.zeros_like(done_indices, dtype=np.int32)
-        env_indices[0] = -1
-        env_indices[1:] = done_indices[:-1]
-        all_lens = done_indices - env_indices
-        seq_indices = np.argsort(all_lens, kind="stable")[::-1]
-        seq_lens = all_lens[seq_indices]
-        return seq_lens, seq_indices  # , sorted_data_sub_indices
-
-    def pad_from_done_indices(self, data, dones):
-        """
-        Packs the data from the done indices to torch.nn.utils.rnn.PackedSequence
-
-        """
-        done_indices = torch.where(dones == True)[0].cpu().numpy().astype(np.int32)
-        sorted_seq_lens, seq_indices = self.get_seqs_indices_for_pack(
-            done_indices
-        )  # sorted_data_sub_indices
-        rev_indices = seq_indices.argsort()
-        assert np.all(np.sort(sorted_seq_lens, kind="stable")[::-1] == sorted_seq_lens)
-        b = done_indices
-        max_colected_len = np.max(sorted_seq_lens)
-        breakpoint()
-        padded_obs = ObsWrapper(tensors=True)
-        for k in data:
-            obs_shape = data[k][-1].shape
-            temp = []
-            curr_idx = 0
-            for i, d_i in enumerate(done_indices):
-                temp.append(data[k][curr_idx : d_i + 1])
-                curr_idx = d_i + 1  #
-
-            temp = [temp[i] for i in seq_indices]
-            max_new_seq_len = max_colected_len
-            new_lens = sorted_seq_lens
-
-            padded_seq_batch = torch.nn.utils.rnn.pad_sequence(temp, batch_first=True)
-            padded_obs[k] = padded_seq_batch
-        return padded_obs, rev_indices

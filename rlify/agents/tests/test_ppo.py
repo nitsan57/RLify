@@ -74,7 +74,7 @@ def test_single(env_name, num_parallel_envs, is_rnn):
         discount_factor=0.99,
         tensorboard_dir="/tmp/ppo/ppo_test_tensorboard/",
     )
-    train_stats = agent.train_n_steps(env=env, n_steps=800)
+    train_stats = agent.train_n_steps(env=env, n_steps=400)
     reward = agent.run_env(env, best_act=True)
     agent.save_agent("/tmp/ppo/ppo_test.pt")
     agent.load_agent("/tmp//ppo/ppo_test.pt")
@@ -82,7 +82,7 @@ def test_single(env_name, num_parallel_envs, is_rnn):
 
 
 def main():
-    test_single("MountainCarContinuous-v0", 4, False)
+    test_single("LunarLanderContinuous-v2", 1, True)
 
 
 if __name__ == "__main__":

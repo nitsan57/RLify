@@ -45,7 +45,7 @@ class Heuristic_Agent(RL_Agent):
         """
         Does nothing in this agent.
         """
-        pass
+        return []
 
     def get_models_input_output_shape(obs_space, action_space):
         """
@@ -93,13 +93,13 @@ class Heuristic_Agent(RL_Agent):
         """reset nn hidden_state - does nothing in this agent"""
         pass
 
-    def update_policy(self, *exp):
+    def update_policy(self, trajectory):
         """
         does nothing in this agent.
         """
         pass
 
-    def get_last_collected_experiences(self, num_episodes):
+    def get_trajectories_data(self, num_episodes):
         """Mainly for Paired Algorithm support"""
         exp = self.experience.get_last_episodes(num_episodes)
         return exp

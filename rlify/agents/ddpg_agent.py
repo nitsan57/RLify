@@ -3,9 +3,11 @@ import torch.optim as optim
 import numpy as np
 from rlify.agents.agent_utils import ObsShapeWraper
 from rlify.agents.dqn_agent import DQN_Agent
-import adabelief_pytorch
+from rlify.agents.experience_replay import ExperienceReplay
+from rlify.agents.explorers import Explorer, RandomExplorer
+from rlify.agents.vdqn_agent import DQNData
 from rlify.models.base_model import BaseModel
-from rlify.utils import HiddenPrints
+import gymnasium as gym
 import copy
 
 
@@ -16,10 +18,25 @@ class DDPG_Agent(DQN_Agent):
 
     def __init__(
         self,
+        obs_space: gym.spaces,
+        action_space: gym.spaces,
+        Q_model: BaseModel,
         Q_mle_model: BaseModel,
         target_update: str = "soft[tau=0.005]",
-        *args,
-        **kwargs,
+        dqn_reg: float = 0.0,
+        batch_size: int = 64,
+        soft_exploit: bool = True,
+        explorer: Explorer = RandomExplorer(),
+        num_parallel_envs: int = 4,
+        num_epochs_per_update: int = 10,
+        lr: float = 3e-4,
+        device: str = None,
+        experience_class: object = ExperienceReplay,
+        max_mem_size: int = int(10e6),
+        discount_factor: float = 0.99,
+        reward_normalization=True,
+        tensorboard_dir: str = "./tensorboard",
+        dataloader_workers: int = 0,
     ):
         """
 
@@ -27,7 +44,8 @@ class DDPG_Agent(DQN_Agent):
 
             env_name = "CartPole-v1"
             env = gym.make(env_name, render_mode=None)
-            models_shapes = DDPG_Agent.get_models_input_output_shape(env.observation_space, env.action_space)
+            models_shapes = DDPG_Agent.get_models_input_output_shape(\
+                env.observation_space, env.action_space)
             Q_input_shape = models_shapes["Q_model"]["input_shape"]
             Q_out_shape = models_shapes["Q_model"]["out_shape"]
             Q_mle_input_shape = models_shapes["Q_mle_model"]["input_shape"]
@@ -40,17 +58,63 @@ class DDPG_Agent(DQN_Agent):
                 input_shape=Q_mle_input_shape,
                 out_shape=Q_mle_out_shape,
             )
-            agent = DDPG_Agent(obs_space=env.observation_space, action_space=env.action_space, Q_model=Q_model, Q_mle_model=Q_mle_model)
-            train_stats = agent.train_n_steps(env=env_c,n_steps=80000)
+            agent = DDPG_Agent(obs_space=env.observation_space, action_space=\
+                env.action_space, Q_model=Q_model, Q_mle_model=Q_mle_model)
+            train_stats = agent.train_n_steps(env=env_c,n_steps=40000)
 
         Args:
-            Q_mle_model (BaseModel): The MLE model to use.
-            args: Additional DQN_Agent arguments.
-            kwargs: Additional DQN_Agent arguments.
+            obs_space (gym.spaces): The observation space of the environment
+            action_space (gym.spaces): The action space of the environment
+            Q_model (BaseModel): The Q model
+            Q_mle_model (BaseModel): The MLE model
+            target_update (str, optional): The target update strategy.
+            Defaults to "soft[tau=0.005]".
+            dqn_reg (float, optional): The regularization factor for the Q model.
+            Defaults to 0.0.
+            batch_size (int, optional): The batch size. Defaults to 64.
+            soft_exploit (bool, optional): Whether to use soft exploitation.
+            Defaults to True.
+            explorer (Explorer, optional): The explorer. Defaults to RandomExplorer().
+            num_parallel_envs (int, optional): The number of parallel environments.
+            Defaults to 4.
+            num_epochs_per_update (int, optional): The number of epochs per update.
+            Defaults to 10.
+            lr (float, optional): The learning rate. Defaults to 3e-4.
+            device (str, optional): The device to use. Defaults to None.
+            experience_class (object, optional): The experience class. Defaults to ExperienceReplay.
+            max_mem_size (int, optional): The maximum memory size. Defaults to int(10e6).
+            discount_factor (float, optional): The discount factor. Defaults to 0.99.
+            reward_normalization (bool, optional): Whether to normalize the rewards.
+            Defaults to True.
+            tensorboard_dir (str, optional): The tensorboard directory. Defaults to "./tensorboard".
+            dataloader_workers (int, optional): The number of dataloader workers.
+            Defaults to 0.
+            accumulate_gradients_per_epoch (bool, optional): Whether to accumulate gradients per epoch.
+            Defaults to None.
+            
 
         """
         self.Q_mle_model = Q_mle_model
-        super().__init__(target_update=target_update, *args, **kwargs)
+        super().__init__(
+            obs_space=obs_space,
+            action_space=action_space,
+            Q_model=Q_model,
+            target_update=target_update,
+            dqn_reg=dqn_reg,
+            batch_size=batch_size,
+            soft_exploit=soft_exploit,
+            explorer=explorer,
+            num_parallel_envs=num_parallel_envs,
+            num_epochs_per_update=num_epochs_per_update,
+            lr=lr,
+            device=device,
+            experience_class=experience_class,
+            max_mem_size=max_mem_size,
+            discount_factor=discount_factor,
+            reward_normalization=reward_normalization,
+            tensorboard_dir=tensorboard_dir,
+            dataloader_workers=dataloader_workers,
+        )
 
     def setup_models(self):
         """
@@ -80,6 +144,12 @@ class DDPG_Agent(DQN_Agent):
             p.requires_grad = False
 
         self.q_mle_optimizer = optim.Adam(self.Q_mle_model.parameters(), lr=self.lr)
+        return [
+            self.Q_model,
+            self.target_Q_model,
+            self.Q_mle_model,
+            self.target_Q_mle_model,
+        ]
 
     @staticmethod
     def get_models_input_output_shape(obs_space, action_space) -> dict:
@@ -117,7 +187,9 @@ class DDPG_Agent(DQN_Agent):
         Hard update model parameters.
 
         Args:
-            manual_update (bool, optional): Whether to force an update. Defaults to False - in case of force update target_update_counter is not updated.
+            manual_update (bool, optional): Whether to force an update,
+            Defaults to False - in case of force update:
+              target_update_counter is not updated.
 
         """
         self.target_update_counter += 1 * (
@@ -133,7 +205,7 @@ class DDPG_Agent(DQN_Agent):
                 p.requires_grad = False
 
             self.target_update_counter = (
-                0 if manual_update == False else self.target_update_counter
+                0 if not manual_update else self.target_update_counter
             )
         self.target_Q_model.eval()
         self.target_Q_mle_model.eval()
@@ -180,7 +252,6 @@ class DDPG_Agent(DQN_Agent):
     def actor_action(
         self,
         observations: torch.tensor,
-        dones: torch.tensor,
         num_obs: int = 1,
         use_target: bool = False,
     ):
@@ -189,29 +260,33 @@ class DDPG_Agent(DQN_Agent):
 
         Args:
             observations (np.ndarray, torch.tensor): The observations to act on
-            dones (np.ndarray, torch.tensor): The dones of the observations
-            num_obs (int, optional): The number of observations to act on. Defaults to 1.
+            num_obs (int, optional): The number of observations to act on.
+            Defaults to 1.
 
         Returns:
             torch.tensor: The actions
 
         """
         states = self.pre_process_obs_for_act(observations, num_obs)
-        cont_transform_coeff = self.cont_transform_coeff.expand(num_obs, self.n_actions)
-        cont_transform_bias = self.cont_transform_bias.expand(num_obs, self.n_actions)
         if use_target:
-            action_pred = self.target_Q_mle_model(states, dones)
+            action_pred = self.target_Q_mle_model(states)
         else:
-            action_pred = self.Q_mle_model(states, dones)
-        all_actions = (
-            torch.tanh(action_pred) * cont_transform_coeff + cont_transform_bias
-        )
-        return all_actions
+            action_pred = self.Q_mle_model(states)
+        action_pred_shape = action_pred.shape
+        action_pred = torch.tanh(action_pred)
+        cont_transform_coeff = self.cont_transform_coeff.expand(
+            action_pred_shape
+        )  # .reshape(action_pred_shape)
+        cont_transform_bias = self.cont_transform_bias.expand(
+            action_pred_shape
+        )  # .reshape(action_pred_shape)
+
+        all_actions = action_pred * cont_transform_coeff + cont_transform_bias
+        return all_actions.reshape(action_pred_shape)
 
     def get_actor_action_value(
         self,
         states: torch.tensor,
-        dones: torch.tensor,
         actions: torch.tensor,
         use_target: bool = False,
     ):
@@ -227,17 +302,16 @@ class DDPG_Agent(DQN_Agent):
             torch.tensor: The actions values
         """
         states["action"] = actions
+
         if use_target:
-            actions_values = self.target_Q_model(states, dones).squeeze(-1)
+            actions_values = self.target_Q_model(states).squeeze(-1)
         else:
-            actions_values = self.Q_model(states, dones).squeeze(-1)
+            actions_values = self.Q_model(states).squeeze(-1)
         return actions_values
 
     def act(self, observations: np.array, num_obs: int = 1):
         with torch.no_grad():
-            actor_acts = self.actor_action(
-                observations, torch.ones((num_obs, 1)), num_obs
-            )
+            actor_acts = self.actor_action(observations, num_obs)
             if self.possible_actions != "continuous":
                 actor_acts = actor_acts.round()
         actions = self.return_correct_actions_dim(
@@ -245,74 +319,102 @@ class DDPG_Agent(DQN_Agent):
         )
         return actions
 
-    def update_policy(self, *exp):
+    def update_policy(self, trajectory_data: DQNData):
         """
         Updates the policy, using the DDPG algorithm.
         """
-        if len(exp) == 0:
-            states, actions, rewards, dones, truncated, next_states, returns = (
-                self._get_dqn_experiences()
-            )
-        else:
-            states, actions, rewards, dones, truncated, next_states, returns = exp
-        all_samples_len = len(states)
-        b_size = len(states) if self.Q_model.is_rnn else self.batch_size
+        shuffle = False if (self.Q_model.is_rnn) else True
+        dataloader = trajectory_data.get_dataloader(
+            self.get_train_batch_size(),
+            shuffle=shuffle,
+            num_workers=self.dataloader_workers,
+        )
         for e in range(self.num_epochs_per_update):
-            terminated = dones * (1 - truncated)
-            for b in range(0, all_samples_len, b_size):
-                batched_states = states[b : b + b_size]
-                batched_actions = actions[b : b + b_size]
-                batched_next_states = next_states[b : b + b_size]
-                batched_rewards = rewards[b : b + b_size]
-                batched_dones = dones[b : b + b_size]
-                batched_terminated = terminated[b : b + b_size]
-                batched_returns = returns[b : b + b_size]
-                not_terminated = 1 - batched_terminated
+            self.q_mle_optimizer.zero_grad(set_to_none=True)
+            self.optimizer.zero_grad(set_to_none=True)
+            for b, mb in enumerate(dataloader):
+                (
+                    batched_states,
+                    batched_actions,
+                    batched_rewards,
+                    batched_returns,
+                    batched_dones,
+                    batched_truncated,
+                    batched_next_states,
+                    batched_loss_flags,
+                ) = mb
+                batched_next_states = batched_next_states.to(
+                    self.device, non_blocking=True
+                )
+                batched_states = batched_states.to(self.device, non_blocking=True)
+                batched_not_terminated = (
+                    1 - (batched_dones * (1 - batched_truncated))
+                ).to(self.device, non_blocking=True)
+                batched_returns = batched_returns.to(self.device, non_blocking=True)
+                batched_rewards = batched_rewards.to(self.device, non_blocking=True)
+                batched_actions = batched_actions.to(self.device, non_blocking=True)
+                batched_dones = batched_dones.to(self.device)
                 real_batch_size = batched_states.len
-
                 q_values = self.get_actor_action_value(
-                    batched_states, batched_dones, batched_actions, use_target=False
+                    batched_states, batched_actions, use_target=False
                 )
                 with torch.no_grad():
                     actor_next_action = self.actor_action(
                         batched_next_states,
-                        batched_dones,
                         real_batch_size,
                         use_target=True,
                     )
+                    actor_next_action = actor_next_action.reshape_as(batched_actions)
                     q_next = self.get_actor_action_value(
                         batched_next_states,
-                        batched_dones,
                         actor_next_action,
                         use_target=True,
-                    )
-                expected_next_values = (
-                    batched_rewards
-                    + (not_terminated * self.discount_factor) * q_next.detach()
-                )
+                    ).detach()
+                expected_next_values = batched_rewards + (
+                    batched_not_terminated * self.discount_factor
+                ) * q_next.reshape_as(batched_returns)
                 expected_next_values = torch.max(expected_next_values, batched_returns)
-                loss = (
-                    self.criterion(q_values, expected_next_values)
-                    + self.dqn_reg * q_values.pow(2).mean()
+                loss = self.criterion_using_loss_flag(
+                    self.criterion,
+                    q_values,
+                    expected_next_values,
+                    batched_loss_flags,
+                ) + self.apply_regularization(
+                    self.dqn_reg, q_values.pow(2), batched_loss_flags
                 )
-
-                batched_states = states[b : b + b_size]
                 actor_action = self.actor_action(
-                    batched_states, batched_dones, real_batch_size, use_target=False
+                    batched_states, real_batch_size, use_target=False
                 )
+                actor_action = actor_action.reshape_as(batched_actions)
                 actor_values = self.get_actor_action_value(
-                    batched_states, batched_dones, actor_action, use_target=False
+                    batched_states, actor_action, use_target=False
                 )
-                actor_loss = -(actor_values.mean())
-                self.q_mle_optimizer.zero_grad(set_to_none=True)
-                actor_loss.backward()  # simple maximisze of actor reward (without changing Q function)
-                self.q_mle_optimizer.step()
+                actor_loss = self.criterion_using_loss_flag(
+                    lambda x, y: -x.mean(),
+                    actor_values,
+                    torch.zeros_like(actor_values),
+                    batched_loss_flags,
+                )
 
-                self.optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                self.optimizer.step()
+                if not self.accumulate_gradients_per_epoch:
+                    self.q_mle_optimizer.zero_grad(set_to_none=True)
+                    actor_loss.backward()
+                    self.q_mle_optimizer.step()
+                    self.optimizer.zero_grad(set_to_none=True)
+                    loss.backward()
+                    self.optimizer.step()
+                    self.update_target()
+                else:
+                    loss = loss / len(dataloader)
+                    loss.backward()
+                    actor_loss = actor_loss / len(dataloader)
+                    actor_loss.backward()
 
-                self.update_target()
                 self.metrics.add("q_loss", loss.item())
                 self.metrics.add("actor_loss", actor_loss.item())
                 self.metrics.add("q_magnitude", q_values.mean().item())
+
+            if self.accumulate_gradients_per_epoch:
+                self.q_mle_optimizer.step()
+                self.optimizer.step()
+                self.update_target()
