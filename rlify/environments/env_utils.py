@@ -148,6 +148,7 @@ class ParallelEnv_m:
         else:
             self.close_procs()
             raise Exception("Timeout in getting responses")
+
     def get_envs(self):
         """
         Returns:
@@ -241,10 +242,7 @@ class SingleEnv_m:
         Resets the environment.
         """
         s, info = self.env.reset()
-        if type(s) != dict:
-            return [(np.array(s, ndmin=1), info)]
-        else:
-            return [(s, info)]
+        return [(s, info)]
 
     def step(self, actions):
         """
@@ -259,10 +257,7 @@ class SingleEnv_m:
         except TypeError:
             action = actions
         next_states, rewards, terminated, trunc, _ = self.env.step(action)
-        if type(next_states) != dict:
-            next_states = np.array(next_states, ndmin=2)
-        else:
-            next_states = [next_states]
+        next_states = [next_states]
         rewards = np.array(rewards, ndmin=1)
         terminated = np.array(terminated, ndmin=1)
         trunc = np.array(trunc, ndmin=1)

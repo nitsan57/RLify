@@ -64,18 +64,20 @@ class GRU(ReccurentLayer):
         )
         self.out_layer = nn.Linear(hidden_dim, np.prod(self.out_shape))
 
-    def forward(self, x: torch.tensor):
+    def forward(self, x: torch.Tensor):
         concat_tensor = []
 
         for k in self.l1.keys():
-            self.l1[k].flatten_parameters()
+
             out, h = self.l1[k](x[k], self.hidden_state[k])
             self.hidden_state[k] = h.detach()
             concat_tensor.append(out)
+
         concat_tensor = torch.cat(concat_tensor, -1)
+        concat_tensor = concat_tensor
         out = self.concat_layer(concat_tensor)
         out = self.out_layer(out)
-        return out.reshape(-1, *self.out_shape)
+        return out
 
     def reset(self):
         self.hidden_state = {k: None for k in self.input_shape}

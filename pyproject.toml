@@ -16,9 +16,7 @@ keywords = ["reinforced", "learning", "reinforced learning", "machine learning",
 authors = [
   {name = "Nitsan Levy", email = "nitsan57@gmail.com" }
 ]
-# maintainers = [
-#   {name = "A. Great Maintainer", email = "maintainer@example.com" }
-# ]
+
 classifiers = [
   #   3 - Alpha
   #   4 - Beta

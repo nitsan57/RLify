@@ -22,6 +22,7 @@ class ExperienceReplay:
             capacity: The max number of samples to store
             obs_shape: The shape of the obs
             n_actions: The number of actions
+            prioritize_high_reward: Whether to prioritize high reward samples
         """
         self.obs_shape = ObsShapeWraper(obs_shape)
         self.n_actions = n_actions

@@ -8,7 +8,7 @@ Clone the [repo](https://github.com/nitsan57/RLkit)
 
 Also check the [docs](https://nitsan57.github.io/RLify-docs/)
 
-For usage examples, please check `getting-started.ipynb`.
+For usage examples, please check `examples/getting-started.ipynb`.
 
 ## Features
 

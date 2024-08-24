@@ -5,3 +5,6 @@ tensorboard/
 .vscode/
 html/
 *.egg-info/
+# user defined
+todo.txt
+data

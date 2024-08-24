@@ -6,7 +6,7 @@ from rlify.agents.explorers import Explorer, RandomExplorer
 import numpy as np
 import functools
 import operator
-from .agent_utils import LambdaDataset, TrainMetrics
+from .agent_utils import TrainMetrics, calc_returns
 from rlify.environments.env_utils import ParallelEnv
 import torch
 from .agent_utils import ObsShapeWraper, ObsWrapper
@@ -37,7 +37,6 @@ class RL_Agent(ABC):
         self,
         obs_space: gym.spaces,
         action_space: gym.spaces,
-        max_mem_size: int = int(10e6),
         batch_size: int = 256,
         explorer: Explorer = RandomExplorer(),
         num_parallel_envs: int = 4,
@@ -45,27 +44,32 @@ class RL_Agent(ABC):
         lr: float = 3e-4,
         device: str = None,
         experience_class: object = ExperienceReplay,
+        max_mem_size: int = int(10e6),
         discount_factor: float = 0.99,
         reward_normalization=True,
         tensorboard_dir: str = "./tensorboard",
         dataloader_workers: int = 0,
+        # accumulate_gradients_per_epoch: bool = None, # future api
     ) -> None:
         """
 
         Args:
             obs_space (gym.spaces): observation space of the environment
             action_space (gym.spaces): action space of the environment
-            max_mem_size (int, optional): maximum size of the experience replay buffer. Defaults to 10e6.
             batch_size (int, optional): batch size for training. Defaults to 256.
             explorer (Explorer, optional): exploration method. Defaults to RandomExplorer().
             num_parallel_envs (int): number of parallel environments. Defaults to 4.
             num_epochs_per_update (int): Training epochs per update. Defaults to 10.
             lr (float, optional): learning rate. Defaults to 0.0001.
             device (torch.device, optional): device to run on. Defaults to None.
-            experience_class (object, optional): experience replay class. Defaults to ExperienceReplay.\
+            experience_class (object, optional): experience replay class. Defaults to ExperienceReplay.
+            max_mem_size (int, optional): maximum size of the experience replay buffer. Defaults to 10e6.
             discount_factor (float, optional): discount factor. Defaults to 0.99.
             reward_normalization (bool, optional): whether to normalize the rewards by maximum absolut value. Defaults to True.
             tensorboard_dir (str, optional): tensorboard directory. Defaults to './tensorboard'.
+            dataloader_workers (int, optional): number of workers for the dataloader. Defaults to 0.
+            accumulate_gradients_per_epoch (bool, optional): whether to update the model every epoch or every batch. Defaults to None \
+                - when None is set in reccurent models it will be set to True, and in normal models it will be set to False
             
         """
         super(RL_Agent, self).__init__()
@@ -73,7 +77,7 @@ class RL_Agent(ABC):
         self.id = uuid.uuid4()
         self.init_tb_writer(tensorboard_dir)
         self.num_epochs_per_update = num_epochs_per_update
-
+        self.accumulate_gradients_per_epoch = False  # future api
         self.env = None
         self.r_func = lambda s, a, r: r
         self.explorer = explorer
@@ -81,7 +85,7 @@ class RL_Agent(ABC):
         self.obs_mean = None
         self.obs_std = None
         self.reward_normalization = reward_normalization
-        self.max_reward = 0
+        self.max_return = 0
 
         self.obs_space = obs_space
         self.obs_shape = ObsShapeWraper(obs_space)  # obs_shape
@@ -96,6 +100,8 @@ class RL_Agent(ABC):
         self.define_action_space(action_space)
         models = self.setup_models()
         self.validate_models(models)
+        if self.contains_reccurent_nn() and self.accumulate_gradients_per_epoch is None:
+            self.accumulate_gradients_per_epoch = True
         self.experience = experience_class(max_mem_size, self.obs_shape, self.n_actions)
 
         self.metrics = TrainMetrics()
@@ -567,6 +573,9 @@ class RL_Agent(ABC):
                 f"number of observations do not match real observation num obs: {num_obs}, vs real len: {len_obs}"
             )
         states = observations.get_as_tensors(self.device)
+        a_state_key = list(states.keys())[0]
+        if self.contains_reccurent_nn() and len(states[a_state_key].shape) == 2:
+            states = states.unsqueeze(1)
         return states
 
     def return_correct_actions_dim(self, actions: np.array, num_obs: int):
@@ -668,10 +677,8 @@ class RL_Agent(ABC):
         truncated = [[] for i in range(num_to_collect_in_parallel)]
 
         max_episode_steps = 0
-        time_to_act = 0
         while not all(env_dones):
             relevant_indices = np.where(env_dones == False)[0].astype(np.int32)
-
             if self.explorer.explore():
                 explore_action = self.explorer.act(
                     self.action_space, latest_observations, num_to_collect_in_parallel
@@ -722,10 +729,12 @@ class RL_Agent(ABC):
         truncated = functools.reduce(operator.iconcat, truncated, [])
 
         rewards_x = np.array(rewards_x).astype(np.float32)
-
-        self.max_reward = max(np.abs(rewards_x).max(), self.max_reward)
+        returns = calc_returns(
+            rewards_x, np.array(dones) * (1 - np.array(truncated)), self.discount_factor
+        )
+        self.max_return = max(np.abs(returns).max(), self.max_return)
         if self.reward_normalization:
-            rewards_x /= self.max_reward + 1e-4
+            rewards_x /= self.max_return + 1e-4
         self.experience.append(observations, actions, rewards_x, dones, truncated)
         self.reset_rnn_hidden()
         self.explorer.update()

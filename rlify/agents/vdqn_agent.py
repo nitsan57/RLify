@@ -2,17 +2,20 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+from rlify.agents.experience_replay import ExperienceReplay
 from rlify.agents.explorers import Explorer, RandomExplorer
 from rlify.agents.agent_utils import IData, LambdaDataset, calc_returns
 from rlify.agents.drl_agent import RL_Agent
-import adabelief_pytorch
 from rlify.models.base_model import BaseModel
-from rlify.utils import HiddenPrints
-
+import gymnasium as gym
 from torch.utils.data import Dataset
 
 
 class DQNDataset(Dataset):
+    """
+    Dataset for DQN
+    """
+
     def __init__(
         self,
         states,
@@ -24,6 +27,18 @@ class DQNDataset(Dataset):
         next_states,
         prepare_for_rnn,
     ):
+        """
+
+        Args:
+            states: np.array: the states
+            actions: np.array: the actions
+            rewards: np.array: the rewards
+            returns: np.array: the returns
+            dones: np.array: the dones
+            truncated: np.array: the truncated
+            next_states: np.array: the next states
+            prepare_for_rnn: bool: whether to prepare for RNN or not
+        """
         obs_collection = states, next_states
         tensor_collection = actions, rewards, returns, truncated
 
@@ -63,6 +78,10 @@ class DQNDataset(Dataset):
 
 
 class DQNData(IData):
+    """
+    DQN Data
+    """
+
     def __init__(
         self,
         states,
@@ -74,7 +93,19 @@ class DQNData(IData):
         next_states,
         prepare_for_rnn,
     ):
+        """
 
+        Args:
+            states: np.array: the states
+            actions: np.array: the actions
+            rewards: np.array: the rewards
+            returns: np.array: the returns
+            dones: np.array: the dones
+            truncated: np.array: the truncated
+            next_states: np.array: the next states
+            prepare_for_rnn: bool: whether to prepare for RNN or not
+
+        """
         dataset = DQNDataset(
             states,
             actions,
@@ -88,16 +119,6 @@ class DQNData(IData):
         super().__init__(dataset, prepare_for_rnn)
 
 
-# class Q_Model(nn.Module):
-#     def __init__(self, nn: BaseModel, out_shape: tuple):
-#         super().__init__(out_shape)
-#         self.nn = nn
-#         self.out_shape = out_shape
-
-#     def forward(self, x):
-#         return self.nn(x).reshape(-1, *self.out_shape)
-
-
 class VDQN_Agent(RL_Agent):
     """
     DQN Agent
@@ -105,13 +126,24 @@ class VDQN_Agent(RL_Agent):
 
     def __init__(
         self,
+        obs_space: gym.spaces,
+        action_space: gym.spaces,
         Q_model: BaseModel,
         dqn_reg: float = 0.0,
         batch_size: int = 64,
         soft_exploit: bool = True,
         explorer: Explorer = RandomExplorer(),
-        *args,
-        **kwargs,
+        num_parallel_envs: int = 4,
+        num_epochs_per_update: int = 10,
+        lr: float = 3e-4,
+        device: str = None,
+        experience_class: object = ExperienceReplay,
+        max_mem_size: int = int(10e6),
+        discount_factor: float = 0.99,
+        reward_normalization=True,
+        tensorboard_dir: str = "./tensorboard",
+        dataloader_workers: int = 0,
+        accumulate_gradients_per_epoch: bool = None,
     ):
         """
         Example::
@@ -127,17 +159,41 @@ class VDQN_Agent(RL_Agent):
             train_stats = agent.train_n_steps(env=env,n_steps=40000)
 
         Args:
-            dqn_reg (float, optional): L2 regularization for the Q network. Defaults to 0.0.
-            batch_size (int, optional): Batch size for training. Defaults to 64.
-            soft_exploit (bool, optional): Whether to use soft exploit. Defaults to True.
-            explorer (Explorer, optional): The explorer to use. Defaults to RandomExplorer().
-            args: Additional RL_Agent arguments.
-            kwargs: Additional RL_Agent arguments.
-
+            obs_space (gym.spaces): The observation space.
+            action_space (gym.spaces): The action space.
+            Q_model (BaseModel): The Q model.
+            dqn_reg (float, optional): The DQN regularization. Defaults to 0.0.
+            batch_size (int, optional): The batch size. Defaults to 64.
+            soft_exploit (bool, optional): Whether to use soft exploitation. Defaults to True.
+            explorer (Explorer, optional): The explorer. Defaults to RandomExplorer().
+            num_parallel_envs (int, optional): The number of parallel environments. Defaults to 4.
+            num_epochs_per_update (int, optional): The number of epochs per update. Defaults to 10.
+            lr (float, optional): The learning rate. Defaults to 3e-4.
+            device (str, optional): The device. Defaults to None.
+            experience_class (object, optional): The experience class. Defaults to ExperienceReplay.
+            max_mem_size (int, optional): The maximum memory size. Defaults to int(10e6).
+            discount_factor (float, optional): The discount factor. Defaults to 0.99.
+            reward_normalization (bool, optional): Whether to normalize the rewards. Defaults to True.
+            tensorboard_dir (str, optional): The tensorboard directory. Defaults to "./tensorboard".
+            dataloader_workers (int, optional): The number of dataloader workers. Defaults to 0.
+            accumulate_gradients_per_epoch (bool, optional): Whether to accumulate gradients per epoch. Defaults to None.
         """
         self.Q_model = Q_model
         super().__init__(
-            explorer=explorer, *args, **kwargs, batch_size=batch_size
+            obs_space=obs_space,
+            action_space=action_space,
+            batch_size=batch_size,
+            num_parallel_envs=num_parallel_envs,
+            num_epochs_per_update=num_epochs_per_update,
+            lr=lr,
+            device=device,
+            experience_class=experience_class,
+            max_mem_size=max_mem_size,
+            discount_factor=discount_factor,
+            reward_normalization=reward_normalization,
+            tensorboard_dir=tensorboard_dir,
+            dataloader_workers=dataloader_workers,
+            explorer=explorer,
         )  # inits
         self.soft_exploit = soft_exploit
         self.dqn_reg = dqn_reg
@@ -283,7 +339,8 @@ class VDQN_Agent(RL_Agent):
             shuffle=shuffle,
             num_workers=self.dataloader_workers,
         )
-        for g in range(self.num_epochs_per_update):
+        for e in range(self.num_epochs_per_update):
+            self.optimizer.zero_grad(set_to_none=True)
             for b, mb in enumerate(dataloader):
                 (
                     batched_states,
@@ -298,7 +355,7 @@ class VDQN_Agent(RL_Agent):
                 batched_next_states = batched_next_states.to(
                     self.device, non_blocking=True
                 )
-                batched_not_terminated = 1 - batched_dones * (1 - batched_truncated)
+                batched_not_terminated = 1 - (batched_dones * (1 - batched_truncated))
                 batched_not_terminated = batched_not_terminated.to(
                     self.device, non_blocking=True
                 )
@@ -307,8 +364,8 @@ class VDQN_Agent(RL_Agent):
                 batched_actions = batched_actions.to(
                     self.device, non_blocking=True
                 ).squeeze()
+                batched_dones = batched_dones.to(self.device, non_blocking=True)
                 batched_states = batched_states.to(self.device)
-                batched_dones = batched_dones.to(self.device)
                 v_table = self.Q_model(batched_states)
                 # flat in case of RNN (b*seq_len, ...)
                 v_table = v_table.reshape(-1, self.possible_actions)
@@ -316,15 +373,15 @@ class VDQN_Agent(RL_Agent):
                     np.arange(len(v_table)), batched_actions.long().flatten()
                 ]
                 with torch.no_grad():
-                    q_next = self.Q_model(batched_next_states).detach().max(1)[0]
-                    q_next = q_next.reshape_as(batched_actions)
+                    q_next = self.Q_model(batched_next_states)  # .detach().max(-1)[0]
+                    q_next = q_next.detach().max(-1)[0]
+                    q_next = q_next.reshape_as(batched_rewards)
 
                 expected_next_values = (
                     batched_rewards
                     + batched_not_terminated * self.discount_factor * q_next.detach()
                 )
                 expected_next_values = torch.max(expected_next_values, batched_returns)
-                expected_next_values = expected_next_values.reshape_as(q_values)
                 loss = self.criterion_using_loss_flag(
                     self.criterion,
                     q_values,
@@ -333,8 +390,18 @@ class VDQN_Agent(RL_Agent):
                 ) + self.apply_regularization(
                     self.dqn_reg, q_values.pow(2), batched_loss_flags
                 )
-                self.optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                self.optimizer.step()
+
+                if not self.accumulate_gradients_per_epoch:
+                    self.optimizer.zero_grad(set_to_none=True)
+                    loss.backward()
+                    self.optimizer.step()
+                else:
+                    loss = loss / len(dataloader)
+                    loss.backward()
+
                 self.metrics.add("q_loss", loss.item())
                 self.metrics.add("q_magnitude", q_values.mean().item())
+
+            if self.accumulate_gradients_per_epoch:
+                self.optimizer.step()
+            self.reset_rnn_hidden()
