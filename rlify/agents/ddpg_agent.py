@@ -89,9 +89,6 @@ class DDPG_Agent(DQN_Agent):
             tensorboard_dir (str, optional): The tensorboard directory. Defaults to "./tensorboard".
             dataloader_workers (int, optional): The number of dataloader workers.
             Defaults to 0.
-            accumulate_gradients_per_epoch (bool, optional): Whether to accumulate gradients per epoch.
-            Defaults to None.
-            
 
         """
         self.Q_mle_model = Q_mle_model

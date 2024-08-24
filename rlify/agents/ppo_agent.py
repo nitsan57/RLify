@@ -14,102 +14,6 @@ from torch.utils.data import Dataset
 import gymnasium as gym
 
 
-class PPODataset(Dataset):
-    """
-    Dataset for PPO.
-    """
-
-    def __init__(
-        self,
-        states,
-        actions,
-        dones,
-        returns,
-        advantages,
-        logits,
-        prepare_for_rnn,
-    ):
-        """
-
-        Args:
-            states (np.ndarray): The states.
-            actions (np.ndarray): The actions.
-            dones (np.ndarray): The dones.
-            returns (np.ndarray): The returns.
-            advantages (np.ndarray): The advantages.
-            logits (np.ndarray): The logits.
-            prepare_for_rnn (bool): Whether to prepare for RNN.
-
-        """
-        obs_collection = (states,)
-        tensor_collection = actions, returns, advantages, logits
-        self.x_dataset = LambdaDataset(
-            obs_collection,
-            tensor_collection=tensor_collection,
-            dones=dones,
-            prepare_for_rnn=prepare_for_rnn,
-        )
-        self.prepare_for_rnn = prepare_for_rnn
-
-    def __len__(self):
-        return len(self.x_dataset)
-
-    def __getitems__(self, idx):
-        obs_collection, tensor_collection, dones, loss_flag = (
-            self.x_dataset.__getitems__(idx)
-        )
-        states = obs_collection[0]
-        actions, returns, advantages, logits = tensor_collection
-        return (
-            states,
-            actions,
-            dones,
-            returns,
-            advantages,
-            logits,
-            loss_flag,
-        )
-
-    def __getitem__(self, idx):
-        return self.__getitems__(idx)
-
-    def collate_fn(self, batch):
-        return batch
-
-
-class PPOData(IData):
-    """
-    A class for PPO data.
-    """
-
-    def __init__(
-        self,
-        states,
-        actions,
-        dones,
-        returns,
-        advantages,
-        logits,
-        prepare_for_rnn,
-    ):
-        """
-
-        Args:
-            states (np.ndarray): The states.
-            actions (np.ndarray): The actions.
-            dones (np.ndarray): The dones.
-            returns (np.ndarray): The returns.
-            advantages (np.ndarray): The advantages.
-            logits (np.ndarray): The logits.
-            prepare_for_rnn (bool): Whether to prepare for RNN.
-
-        """
-        dataset = PPODataset(
-            states, actions, dones, returns, advantages, logits, prepare_for_rnn
-        )
-        super().__init__(dataset, prepare_for_rnn)
-
-
 class PPO_Agent(RL_Agent):
     """Proximal Policy Optimization (PPO) reinforcement learning agent.
     Inherits from RL_Agent.
@@ -174,7 +78,7 @@ class PPO_Agent(RL_Agent):
             reward_normalization (bool): Whether to normalize rewards.
             tensorboard_dir (str): The directory to save tensorboard logs.
             dataloader_workers (int): The number of workers for the dataloader.
-            accumulate_gradients_per_epoch (bool): Whether to accumulate gradients per epoch.
+
         """
         self.policy_nn = policy_nn
         self.critic_nn = critic_nn
@@ -557,3 +461,99 @@ class PPO_Agent(RL_Agent):
             if self.accumulate_gradients_per_epoch:
                 self.actor_optimizer.step()
                 self.critic_optimizer.step()
+
+
+class PPODataset(Dataset):
+    """
+    Dataset for PPO.
+    """
+
+    def __init__(
+        self,
+        states,
+        actions,
+        dones,
+        returns,
+        advantages,
+        logits,
+        prepare_for_rnn,
+    ):
+        """
+
+        Args:
+            states (np.ndarray): The states.
+            actions (np.ndarray): The actions.
+            dones (np.ndarray): The dones.
+            returns (np.ndarray): The returns.
+            advantages (np.ndarray): The advantages.
+            logits (np.ndarray): The logits.
+            prepare_for_rnn (bool): Whether to prepare for RNN.
+
+        """
+        obs_collection = (states,)
+        tensor_collection = actions, returns, advantages, logits
+        self.x_dataset = LambdaDataset(
+            obs_collection,
+            tensor_collection=tensor_collection,
+            dones=dones,
+            prepare_for_rnn=prepare_for_rnn,
+        )
+        self.prepare_for_rnn = prepare_for_rnn
+
+    def __len__(self):
+        return len(self.x_dataset)
+
+    def __getitems__(self, idx):
+        obs_collection, tensor_collection, dones, loss_flag = (
+            self.x_dataset.__getitems__(idx)
+        )
+        states = obs_collection[0]
+        actions, returns, advantages, logits = tensor_collection
+        return (
+            states,
+            actions,
+            dones,
+            returns,
+            advantages,
+            logits,
+            loss_flag,
+        )
+
+    def __getitem__(self, idx):
+        return self.__getitems__(idx)
+
+    def collate_fn(self, batch):
+        return batch
+
+
+class PPOData(IData):
+    """
+    A class for PPO data.
+    """
+
+    def __init__(
+        self,
+        states,
+        actions,
+        dones,
+        returns,
+        advantages,
+        logits,
+        prepare_for_rnn,
+    ):
+        """
+
+        Args:
+            states (np.ndarray): The states.
+            actions (np.ndarray): The actions.
+            dones (np.ndarray): The dones.
+            returns (np.ndarray): The returns.
+            advantages (np.ndarray): The advantages.
+            logits (np.ndarray): The logits.
+            prepare_for_rnn (bool): Whether to prepare for RNN.
+
+        """
+        dataset = PPODataset(
+            states, actions, dones, returns, advantages, logits, prepare_for_rnn
+        )
+        super().__init__(dataset, prepare_for_rnn)
