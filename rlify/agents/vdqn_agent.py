@@ -11,114 +11,6 @@ import gymnasium as gym
 from torch.utils.data import Dataset
 
 
-class DQNDataset(Dataset):
-    """
-    Dataset for DQN
-    """
-
-    def __init__(
-        self,
-        states,
-        actions,
-        rewards,
-        returns,
-        dones,
-        truncated,
-        next_states,
-        prepare_for_rnn,
-    ):
-        """
-
-        Args:
-            states: np.array: the states
-            actions: np.array: the actions
-            rewards: np.array: the rewards
-            returns: np.array: the returns
-            dones: np.array: the dones
-            truncated: np.array: the truncated
-            next_states: np.array: the next states
-            prepare_for_rnn: bool: whether to prepare for RNN or not
-        """
-        obs_collection = states, next_states
-        tensor_collection = actions, rewards, returns, truncated
-
-        self.x_dataset = LambdaDataset(
-            obs_collection,
-            tensor_collection=tensor_collection,
-            dones=dones,
-            prepare_for_rnn=prepare_for_rnn,
-        )
-        self.prepare_for_rnn = prepare_for_rnn
-
-    def __len__(self):
-        return len(self.x_dataset)
-
-    def __getitems__(self, idx):
-        obs_collection, tensor_collection, dones, loss_flag = (
-            self.x_dataset.__getitems__(idx)
-        )
-        states, next_states = obs_collection
-        actions, rewards, returns, truncated = tensor_collection
-        return (
-            states,
-            actions,
-            rewards,
-            returns,
-            dones,
-            truncated,
-            next_states,
-            loss_flag,
-        )
-
-    def __getitem__(self, idx):
-        return self.__getitems__(idx)
-
-    def collate_fn(self, batch):
-        return batch
-
-
-class DQNData(IData):
-    """
-    DQN Data
-    """
-
-    def __init__(
-        self,
-        states,
-        actions,
-        rewards,
-        returns,
-        dones,
-        truncated,
-        next_states,
-        prepare_for_rnn,
-    ):
-        """
-
-        Args:
-            states: np.array: the states
-            actions: np.array: the actions
-            rewards: np.array: the rewards
-            returns: np.array: the returns
-            dones: np.array: the dones
-            truncated: np.array: the truncated
-            next_states: np.array: the next states
-            prepare_for_rnn: bool: whether to prepare for RNN or not
-
-        """
-        dataset = DQNDataset(
-            states,
-            actions,
-            rewards,
-            returns,
-            dones,
-            truncated,
-            next_states,
-            prepare_for_rnn,
-        )
-        super().__init__(dataset, prepare_for_rnn)
-
-
 class VDQN_Agent(RL_Agent):
     """
     DQN Agent
@@ -176,7 +68,6 @@ class VDQN_Agent(RL_Agent):
             reward_normalization (bool, optional): Whether to normalize the rewards. Defaults to True.
             tensorboard_dir (str, optional): The tensorboard directory. Defaults to "./tensorboard".
             dataloader_workers (int, optional): The number of dataloader workers. Defaults to 0.
-            accumulate_gradients_per_epoch (bool, optional): Whether to accumulate gradients per epoch. Defaults to None.
         """
         self.Q_model = Q_model
         super().__init__(
@@ -405,3 +296,111 @@ class VDQN_Agent(RL_Agent):
             if self.accumulate_gradients_per_epoch:
                 self.optimizer.step()
             self.reset_rnn_hidden()
+
+
+class DQNDataset(Dataset):
+    """
+    Dataset for DQN
+    """
+
+    def __init__(
+        self,
+        states,
+        actions,
+        rewards,
+        returns,
+        dones,
+        truncated,
+        next_states,
+        prepare_for_rnn,
+    ):
+        """
+
+        Args:
+            states: np.array: the states
+            actions: np.array: the actions
+            rewards: np.array: the rewards
+            returns: np.array: the returns
+            dones: np.array: the dones
+            truncated: np.array: the truncated
+            next_states: np.array: the next states
+            prepare_for_rnn: bool: whether to prepare for RNN or not
+        """
+        obs_collection = states, next_states
+        tensor_collection = actions, rewards, returns, truncated
+
+        self.x_dataset = LambdaDataset(
+            obs_collection,
+            tensor_collection=tensor_collection,
+            dones=dones,
+            prepare_for_rnn=prepare_for_rnn,
+        )
+        self.prepare_for_rnn = prepare_for_rnn
+
+    def __len__(self):
+        return len(self.x_dataset)
+
+    def __getitems__(self, idx):
+        obs_collection, tensor_collection, dones, loss_flag = (
+            self.x_dataset.__getitems__(idx)
+        )
+        states, next_states = obs_collection
+        actions, rewards, returns, truncated = tensor_collection
+        return (
+            states,
+            actions,
+            rewards,
+            returns,
+            dones,
+            truncated,
+            next_states,
+            loss_flag,
+        )
+
+    def __getitem__(self, idx):
+        return self.__getitems__(idx)
+
+    def collate_fn(self, batch):
+        return batch
+
+
+class DQNData(IData):
+    """
+    DQN Data
+    """
+
+    def __init__(
+        self,
+        states,
+        actions,
+        rewards,
+        returns,
+        dones,
+        truncated,
+        next_states,
+        prepare_for_rnn,
+    ):
+        """
+
+        Args:
+            states: np.array: the states
+            actions: np.array: the actions
+            rewards: np.array: the rewards
+            returns: np.array: the returns
+            dones: np.array: the dones
+            truncated: np.array: the truncated
+            next_states: np.array: the next states
+            prepare_for_rnn: bool: whether to prepare for RNN or not
+
+        """
+        dataset = DQNDataset(
+            states,
+            actions,
+            rewards,
+            returns,
+            dones,
+            truncated,
+            next_states,
+            prepare_for_rnn,
+        )
+        super().__init__(dataset, prepare_for_rnn)

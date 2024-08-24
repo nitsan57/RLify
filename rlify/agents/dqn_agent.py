@@ -77,7 +77,6 @@ class DQN_Agent(VDQN_Agent):
             reward_normalization (bool, optional): Whether to normalize rewards. Defaults to True.
             tensorboard_dir (str, optional): The directory to save TensorBoard logs. Defaults to "./tensorboard".
             dataloader_workers (int, optional): The number of workers for the data loader. Defaults to 0.
-            accumulate_gradients_per_epoch (bool, optional): Whether to accumulate gradients per epoch. Defaults to None.
 
         """
         self.init_target_update_rule(target_update)
