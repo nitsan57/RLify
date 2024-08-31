@@ -9,6 +9,7 @@ Clone the [repo](https://github.com/nitsan57/RLkit)
 Also check the [docs](https://nitsan57.github.io/RLify-docs/)
 
 For usage examples, please check `examples/getting-started.ipynb`.
+For custom NN usage, please check `examples/custom_nn_example.ipynb`.
 
 ## Features
 
