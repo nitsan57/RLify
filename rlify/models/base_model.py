@@ -26,7 +26,6 @@ class BaseModel(torch.nn.Module, ABC):
         self.num_inputs = len(self.input_size_dict)
         self.out_shape = np.array(out_shape, ndmin=1)
 
-
     def get_total_params(self):
         """
         Returns the total number of parameters in the model

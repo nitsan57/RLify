@@ -140,10 +140,11 @@ class VDQN_Agent(RL_Agent):
         experience_class: object = ExperienceReplay,
         max_mem_size: int = int(10e6),
         discount_factor: float = 0.99,
+        normlize_obs: str = "auto",
         reward_normalization=True,
         tensorboard_dir: str = "./tensorboard",
         dataloader_workers: int = 0,
-        accumulate_gradients_per_epoch: bool = None,
+        
     ):
         """
         Example::
@@ -189,6 +190,7 @@ class VDQN_Agent(RL_Agent):
             experience_class=experience_class,
             max_mem_size=max_mem_size,
             discount_factor=discount_factor,
+            normlize_obs=normlize_obs,
             reward_normalization=reward_normalization,
             tensorboard_dir=tensorboard_dir,
             dataloader_workers=dataloader_workers,

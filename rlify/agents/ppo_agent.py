@@ -133,6 +133,7 @@ class PPO_Agent(RL_Agent):
         experience_class: object = ForgettingExperienceReplay,
         max_mem_size: int = int(10e5),
         discount_factor: float = 0.99,
+        normlize_obs: str = "auto",
         reward_normalization=True,
         tensorboard_dir: str = "./tensorboard",
         dataloader_workers: int = 0,
@@ -190,6 +191,7 @@ class PPO_Agent(RL_Agent):
             experience_class=experience_class,
             max_mem_size=max_mem_size,
             discount_factor=discount_factor,
+            normlize_obs=normlize_obs,
             reward_normalization=reward_normalization,
             tensorboard_dir=tensorboard_dir,
             dataloader_workers=dataloader_workers,
@@ -261,10 +263,10 @@ class PPO_Agent(RL_Agent):
                 self.policy_nn(x).reshape(-1, 2 * self.n_actions),
             )
 
-        weight = list(self.policy_nn.children())[-1].weight.data
-        bias = list(self.policy_nn.children())[-1].bias.data
-        list(self.policy_nn.children())[-1].weight.data = (weight) * 0.01
-        list(self.policy_nn.children())[-1].bias.data = (bias) * 0.01
+        # weight = list(self.policy_nn.children())[-1].weight.data
+        # bias = list(self.policy_nn.children())[-1].bias.data
+        # list(self.policy_nn.children())[-1].weight.data = (weight) * 0.01
+        # list(self.policy_nn.children())[-1].bias.data = (bias) * 0.01
 
         with HiddenPrints():
             self.actor_optimizer = adabelief_pytorch.AdaBelief(
@@ -381,7 +383,10 @@ class PPO_Agent(RL_Agent):
 
         if training:
             self.set_train_mode()
-        batched_loss_flags = torch.cat(batched_loss_flags_list, -1).flatten()
+        try:
+            batched_loss_flags = torch.cat(batched_loss_flags_list).flatten()
+        except:
+            breakpoint()
         if self.contains_reccurent_nn():
             return (
                 torch.cat(logits, 1)

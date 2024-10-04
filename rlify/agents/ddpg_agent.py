@@ -34,6 +34,7 @@ class DDPG_Agent(DQN_Agent):
         experience_class: object = ExperienceReplay,
         max_mem_size: int = int(10e6),
         discount_factor: float = 0.99,
+        normlize_obs: str = "auto",
         reward_normalization=True,
         tensorboard_dir: str = "./tensorboard",
         dataloader_workers: int = 0,
@@ -108,6 +109,7 @@ class DDPG_Agent(DQN_Agent):
             experience_class=experience_class,
             max_mem_size=max_mem_size,
             discount_factor=discount_factor,
+            normlize_obs=normlize_obs,
             reward_normalization=reward_normalization,
             tensorboard_dir=tensorboard_dir,
             dataloader_workers=dataloader_workers,
@@ -117,7 +119,7 @@ class DDPG_Agent(DQN_Agent):
         """
         Initializes the Q, target Q and MLE networks.
         """
-        super().setup_models()
+        q_models = super().setup_models()
 
         if np.issubdtype(self.action_dtype, np.integer):
             low = 0
@@ -142,8 +144,7 @@ class DDPG_Agent(DQN_Agent):
 
         self.q_mle_optimizer = optim.Adam(self.Q_mle_model.parameters(), lr=self.lr)
         return [
-            self.Q_model,
-            self.target_Q_model,
+            *q_models,
             self.Q_mle_model,
             self.target_Q_mle_model,
         ]
@@ -298,12 +299,13 @@ class DDPG_Agent(DQN_Agent):
         Returns:
             torch.tensor: The actions values
         """
-        states["action"] = actions
+        action_states = states.__copy__()
+        action_states["action"] = actions
 
         if use_target:
-            actions_values = self.target_Q_model(states).squeeze(-1)
+            actions_values = self.target_Q_model(action_states).squeeze(-1)
         else:
-            actions_values = self.Q_model(states).squeeze(-1)
+            actions_values = self.Q_model(action_states).squeeze(-1)
         return actions_values
 
     def act(self, observations: np.array, num_obs: int = 1):

@@ -6,6 +6,9 @@ from rlify.agents.explorers import Explorer, RandomExplorer
 import numpy as np
 import functools
 import operator
+
+from rlify.agents.obs_normlizers import ObsNormlizer, AutoNormlizer
+from rlify.models.base_model import BaseModel
 from .agent_utils import TrainMetrics, calc_returns
 from rlify.environments.env_utils import ParallelEnv
 import torch
@@ -22,6 +25,20 @@ import pygame
 
 logger = logging.getLogger(__name__)
 import datetime
+
+
+class NormlizerNNWrapper(BaseModel):
+    def __init__(self, nn: BaseModel, normlizer: ObsNormlizer = AutoNormlizer):
+        super().__init__(nn.input_shape, nn.out_shape)
+        self.nn = nn
+        self.normlizer = normlizer(nn.input_shape, rnn_obs=nn.is_rnn)
+        self.is_rnn = nn.is_rnn
+
+    def forward(self, x):
+        return self.nn(self.normlizer(x))
+
+    def reset(self):
+        self.nn.reset()
 
 
 class RL_Agent(ABC):
@@ -46,10 +63,10 @@ class RL_Agent(ABC):
         experience_class: object = ExperienceReplay,
         max_mem_size: int = int(10e6),
         discount_factor: float = 0.99,
+        normlize_obs: str = "auto",
         reward_normalization=True,
         tensorboard_dir: str = "./tensorboard",
         dataloader_workers: int = 0,
-        # accumulate_gradients_per_epoch: bool = None, # future api
     ) -> None:
         """
 
@@ -65,6 +82,7 @@ class RL_Agent(ABC):
             experience_class (object, optional): experience replay class. Defaults to ExperienceReplay.
             max_mem_size (int, optional): maximum size of the experience replay buffer. Defaults to 10e6.
             discount_factor (float, optional): discount factor. Defaults to 0.99.
+            normlize_obs (str, optional): normalization method for the observations. Defaults to None. valid values are [auto, None]
             reward_normalization (bool, optional): whether to normalize the rewards by maximum absolut value. Defaults to True.
             tensorboard_dir (str, optional): tensorboard directory. Defaults to './tensorboard'.
             dataloader_workers (int, optional): number of workers for the dataloader. Defaults to 0.
@@ -86,7 +104,6 @@ class RL_Agent(ABC):
         self.obs_std = None
         self.reward_normalization = reward_normalization
         self.max_return = 0
-
         self.obs_space = obs_space
         self.obs_shape = ObsShapeWraper(obs_space)  # obs_shape
         self.discount_factor = discount_factor
@@ -99,9 +116,18 @@ class RL_Agent(ABC):
         self.lr = lr
         self.define_action_space(action_space)
         models = self.setup_models()
+
         self.validate_models(models)
         if self.contains_reccurent_nn() and self.accumulate_gradients_per_epoch is None:
             self.accumulate_gradients_per_epoch = True
+        if normlize_obs == "auto":
+            for attr in self.__dict__:
+                if isinstance(self.__dict__[attr], torch.nn.Module):
+                    self.__dict__[attr] = NormlizerNNWrapper(self.__dict__[attr]).to(
+                        self.device
+                    )
+                self.setup_models()
+
         self.experience = experience_class(max_mem_size, self.obs_shape, self.n_actions)
 
         self.metrics = TrainMetrics()
@@ -116,10 +142,10 @@ class RL_Agent(ABC):
         return self.batch_size
 
     def contains_reccurent_nn(self):
-        return self.rnn_models
+        return self.containes_rnn_models
 
     def validate_models(self, models):
-        self.rnn_models = False
+        self.containes_rnn_models = False
         assert (
             models is not None
         ), "setup_models should return a list of models, or empty list"
@@ -130,7 +156,7 @@ class RL_Agent(ABC):
             assert (
                 np.array(is_rnn_list) == is_rnn_list[0]
             ).all(), "all models should have the same rnn status - either all reccurent, or either all not reccurent"
-            self.rnn_models = is_rnn_list[0]
+            self.containes_rnn_models = is_rnn_list[0]
 
     def init_tb_writer(self, tensorboard_dir: str = None):
         """
@@ -226,7 +252,7 @@ class RL_Agent(ABC):
 
     @staticmethod
     def read_nn_properties(ckpt_fname):
-        checkpoint = torch.load(ckpt_fname, map_location="cpu")
+        checkpoint = torch.load(ckpt_fname, map_location="cpu", weights_only=False)
         relevant_keys = []
         for k in checkpoint:
             if isinstance(checkpoint[k], dict) and "approximated_args" in checkpoint[k]:
@@ -289,7 +315,7 @@ class RL_Agent(ABC):
         Loads the agent from a file.
         Returns: a dictionary containing the agent's state.
         """
-        checkpoint = torch.load(f_name, map_location=self.device)
+        checkpoint = torch.load(f_name, map_location=self.device, weights_only=False)
         self.action_space = checkpoint["action_space"]
         self.obs_space = checkpoint["obs_space"]
         self.obs_shape = checkpoint["obs_shape"]
@@ -546,13 +572,6 @@ class RL_Agent(ABC):
             The highest probabilty action to be taken in a detrministic way
         """
         raise NotImplementedError
-
-    def norm_obs(self, observations):
-        """
-        Normalizes the observations according to the pre given normalization parameters [future api - currently not availble]
-        """
-        return observations
-        return (observations - self.norm_params["mean"]) / self.norm_params["std"]
 
     def pre_process_obs_for_act(self, observations: ObsWrapper | dict, num_obs: int):
         """
