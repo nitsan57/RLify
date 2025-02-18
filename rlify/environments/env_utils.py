@@ -17,7 +17,10 @@ def worker(env, conn):
     done = False
 
     while proc_running:
-        cmd, msg = conn.recv()
+        if conn.poll(30):
+            cmd, msg = conn.recv()
+        else:
+            return
 
         if cmd == "step":
             if done:
@@ -125,7 +128,7 @@ class ParallelEnv_m:
         self.comm = []
         for idx in range(self.num_envs):
             parent_conn, worker_conn = Pipe()
-            proc = Process(target=worker, args=((copy.deepcopy(env)), worker_conn))
+            proc = Process(target=worker, args=(env, worker_conn))
             proc.start()
             self.comm.append(self.process(proc, parent_conn, worker_conn))
 
@@ -135,7 +138,7 @@ class ParallelEnv_m:
         Args:
             env: The new environment.
         """
-        [p.connection.send(("change_env", copy.deepcopy(env))) for p in self.comm]
+        [p.connection.send(("change_env", env)) for p in self.comm]
 
     def get_responses(self):
         """

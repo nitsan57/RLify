@@ -96,7 +96,7 @@ class DQN_Agent(VDQN_Agent):
             device=device,
             experience_class=experience_class,
             discount_factor=discount_factor,
-            normlize_obs=normlize_obs,rlify/agents/ddpg_agent.py 
+            normlize_obs=normlize_obs,
             reward_normalization=reward_normalization,
             tensorboard_dir=tensorboard_dir,
             dataloader_workers=dataloader_workers,
@@ -248,7 +248,7 @@ class DQN_Agent(VDQN_Agent):
                     np.arange(len(v_table)), batched_actions.long().flatten()
                 ]
                 q_values = q_values.reshape_as(batched_actions)
-                with torch.no_grad():
+                with torch.inference_mode():
                     q_next = (
                         self.target_Q_model(batched_next_states).detach().max(-1)[0]
                     )

@@ -531,7 +531,6 @@ class ObsWrapper:
                 "flatten with dims, not supported for ObsWrapper that is not torch.tensor"
             )
         return ObsWrapper(temp_dict, keep_dims=True, tensors=True)
-    
 
     def get_as_tensors(self, device):
         """

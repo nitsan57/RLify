@@ -1,7 +1,10 @@
+import datetime
 import torch
 import numpy as np
 import copy
 from rlify.agents.agent_utils import ObsWrapper, ObsShapeWraper
+import os
+import pickle
 
 
 class ExperienceReplay:
@@ -444,3 +447,148 @@ class ForgettingExperienceReplay(ExperienceReplay):
         """
         all_data = self.get_all_buffers()
         return all_data
+
+
+class DiskExperienceReplay(ExperienceReplay):
+    """
+    This class is used to store and sample experience, it saves all episode data on disk and loads from disk without keeping in memory vectors.
+    """
+
+    def __init__(
+        self,
+        capacity,
+        obs_shape,
+        n_actions,
+        prioritize_high_reward=False,
+    ):
+        """
+        Args:
+            capacity: The capacity of the replay buffer.
+            obs_shape: The shape of the observations.
+            n_actions: The number of actions.
+            prioritize_high_reward: Whether to prioritize high reward samples.
+        """
+        super().__init__(capacity, obs_shape, n_actions, prioritize_high_reward)
+        date = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.storage_dir = f"/tmp/rlify_disk_experience_replay_{date}"
+        os.makedirs(self.storage_dir, exist_ok=True)
+        self.episode_counter = 0
+        self.episodes_lengths = []
+        self.cyclic = False
+
+    def append(self, curr_obs, actions, rewards, dones, truncateds):
+        """
+        Appends a new sample to the memory.
+        Args:
+            curr_obs: The current observations.
+            actions: The action taken.
+            rewards: The reward received.
+            dones: Whether the episode is done.
+        """
+        end_episodes_indices = np.where(dones)[0]
+        start_episodes_indices = [0] + list(end_episodes_indices + 1)[:-1]
+        for start, end in zip(start_episodes_indices, end_episodes_indices):
+            episode_data = {
+                "obs": curr_obs[start : end + 1],
+                "actions": actions[start : end + 1],
+                "rewards": rewards[start : end + 1],
+                "dones": dones[start : end + 1],
+                "truncateds": truncateds[start : end + 1],
+            }
+            if self.curr_size + len(episode_data["obs"]) > self.capacity or self.cyclic:
+                self.episode_counter = self.episode_counter % len(self.episodes_lengths)
+                self.episode_counter += 1
+                self.cyclic = True
+                self.curr_size += (
+                    episode_data["obs"] - self.episodes_lengths[self.episode_counter]
+                )
+                self.episodes_lengths[self.episode_counter] = len(episode_data["obs"])
+            else:
+                self.episodes_lengths.append(len(episode_data["obs"]))
+                self.curr_size += len(episode_data["obs"])
+                self.save_episode(episode_data)
+                self.episodes_lengths.append(len(episode_data["obs"]))
+                self.episode_counter += 1
+
+    def save_episode(self, episode_data):
+        """
+        Saves an episode to disk.
+        Args:
+            episode_data: The episode data to save.
+        """
+        episode_file = os.path.join(
+            self.storage_dir, f"episode_{self.episode_counter}.pkl"
+        )
+        with open(episode_file, "wb") as f:
+            pickle.dump(episode_data, f)
+
+    def load_episode(self, episode_index):
+        """
+        Loads an episode from disk.
+        Args:
+            episode_index: The index of the episode to load.
+        Returns:
+            The loaded episode data.
+        """
+        episode_file = os.path.join(self.storage_dir, f"episode_{episode_index}.pkl")
+        with open(episode_file, "rb") as f:
+            episode_data = pickle.load(f)
+        return episode_data
+
+    def sample_random_episodes(self, num_episodes):
+        """
+        Args:
+            num_episodes: The number of full episodes to return.
+        Returns:
+            A batch of random episodes samples.
+        """
+        stored_episodes = self.episode_counter
+        chosen_episodes_indices = np.random.choice(
+            stored_episodes, num_episodes, replace=False
+        )
+        episodes = [self.load_episode(i) for i in chosen_episodes_indices]
+        return episodes
+
+    def sample_random_batch(self, sample_size):
+        """
+        Args:
+            sample_size: The number of samples to return.
+        Returns:
+            A random batch of samples.
+        """
+        all_samples = []
+        for i in range(self.episode_counter):
+            episode_data = self.load_episode(i)
+            for j in range(len(episode_data["obs"])):
+                sample = (
+                    episode_data["obs"][j],
+                    episode_data["actions"][j],
+                    episode_data["rewards"][j],
+                    episode_data["dones"][j],
+                    episode_data["truncateds"][j],
+                )
+                all_samples.append(sample)
+        sample_size = min(sample_size, len(all_samples))
+        indices = np.random.choice(len(all_samples), sample_size, replace=False)
+        return [all_samples[i] for i in indices]
+
+    def get_num_samples_of_k_last_episodes(self, num_episodes):
+        """
+        Args:
+            num_episodes: The number of episodes to return.
+        Returns:
+            The number of samples in the last k episodes.
+        """
+        num_samples = 0
+        for i in range(self.episode_counter - num_episodes, self.episode_counter):
+            episode_data = self.load_episode(i)
+            num_samples += len(episode_data["obs"])
+        return num_samples
+
+    def __del__(self):
+        """
+        Deletes the storage directory.
+        """
+        import shutil
+
+        shutil.rmtree(self.storage_dir)

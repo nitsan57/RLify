@@ -7,11 +7,10 @@ import numpy as np
 import functools
 import operator
 
-from rlify.agents.obs_normlizers import ObsNormlizer, AutoNormlizer
-from rlify.models.base_model import BaseModel
 from .agent_utils import TrainMetrics, calc_returns
 from rlify.environments.env_utils import ParallelEnv
 import torch
+
 from .agent_utils import ObsShapeWraper, ObsWrapper
 from rlify.agents.experience_replay import ExperienceReplay
 import uuid
@@ -22,23 +21,8 @@ from munch import Munch
 import os
 import pygame
 
-
 logger = logging.getLogger(__name__)
 import datetime
-
-
-class NormlizerNNWrapper(BaseModel):
-    def __init__(self, nn: BaseModel, normlizer: ObsNormlizer = AutoNormlizer):
-        super().__init__(nn.input_shape, nn.out_shape)
-        self.nn = nn
-        self.normlizer = normlizer(nn.input_shape, rnn_obs=nn.is_rnn)
-        self.is_rnn = nn.is_rnn
-
-    def forward(self, x):
-        return self.nn(self.normlizer(x))
-
-    def reset(self):
-        self.nn.reset()
 
 
 class RL_Agent(ABC):
@@ -63,7 +47,7 @@ class RL_Agent(ABC):
         experience_class: object = ExperienceReplay,
         max_mem_size: int = int(10e6),
         discount_factor: float = 0.99,
-        normlize_obs: str = "auto",
+        normlize_obs: str = None,
         reward_normalization=True,
         tensorboard_dir: str = "./tensorboard",
         dataloader_workers: int = 0,
@@ -86,9 +70,7 @@ class RL_Agent(ABC):
             reward_normalization (bool, optional): whether to normalize the rewards by maximum absolut value. Defaults to True.
             tensorboard_dir (str, optional): tensorboard directory. Defaults to './tensorboard'.
             dataloader_workers (int, optional): number of workers for the dataloader. Defaults to 0.
-            accumulate_gradients_per_epoch (bool, optional): whether to update the model every epoch or every batch. Defaults to None \
-                - when None is set in reccurent models it will be set to True, and in normal models it will be set to False
-            
+
         """
         super(RL_Agent, self).__init__()
         self.dataloader_workers = dataloader_workers
@@ -112,25 +94,46 @@ class RL_Agent(ABC):
         self.device = (
             device if device is not None else utils.init_torch()
         )  # default goes to cuda -> cpu' or enter manualy
-
+        self.optimizer_class = torch.optim.Adam
         self.lr = lr
         self.define_action_space(action_space)
         models = self.setup_models()
+        for m in models:
+            m = torch.compile(m)
 
         self.validate_models(models)
         if self.contains_reccurent_nn() and self.accumulate_gradients_per_epoch is None:
-            self.accumulate_gradients_per_epoch = True
+            self.accumulate_gradients_per_epoch = False
+
+        assert normlize_obs in [
+            "auto",
+            None,
+        ], 'normlize_obs should be "auto" or None currently'
         if normlize_obs == "auto":
-            for attr in self.__dict__:
-                if isinstance(self.__dict__[attr], torch.nn.Module):
-                    self.__dict__[attr] = NormlizerNNWrapper(self.__dict__[attr]).to(
-                        self.device
-                    )
-                self.setup_models()
+            self.register_normalizer(models)
 
         self.experience = experience_class(max_mem_size, self.obs_shape, self.n_actions)
 
         self.metrics = TrainMetrics()
+
+    def register_normalizer(self, models: list[torch.nn.Module]):
+        def normlizer(self, obs):
+            normlized_obs = {}
+            assert len(obs) == 1
+            obs = obs[0]
+            for k in obs.keys():
+                positive = obs[k] >= 0
+                normlized_obs[k] = obs[k].clone()
+                normlized_obs[k][positive] = (
+                    0.5 * torch.nn.functional.tanh(torch.log(obs[k][positive])) + 0.5
+                ).clone()
+                normlized_obs[k][~positive] = (
+                    -0.5 * torch.nn.functional.tanh(torch.log(-obs[k][~positive])) - 0.5
+                ).clone()
+            return ObsWrapper(normlized_obs)
+
+        for m in models:
+            m.register_forward_pre_hook(normlizer)
 
     def get_train_batch_size(self):
         """

@@ -144,7 +144,6 @@ class VDQN_Agent(RL_Agent):
         reward_normalization=True,
         tensorboard_dir: str = "./tensorboard",
         dataloader_workers: int = 0,
-        
     ):
         """
         Example::
@@ -215,7 +214,7 @@ class VDQN_Agent(RL_Agent):
         Initializes the Q Model and optimizer.
         """
         self.Q_model = self.Q_model.to(self.device)
-        self.optimizer = optim.Adam(self.Q_model.parameters(), lr=self.lr)
+        self.optimizer = self.optimizer_class(self.Q_model.parameters(), lr=self.lr)
         return [self.Q_model]
 
     @staticmethod
@@ -278,7 +277,7 @@ class VDQN_Agent(RL_Agent):
             The Q values (torch.tensor)
         """
         states = self.pre_process_obs_for_act(observations, num_obs)
-        with torch.no_grad():
+        with torch.inference_mode():
             all_actions_values = self.Q_model(states)
             all_actions_values = torch.squeeze(all_actions_values, 1)
 
@@ -373,7 +372,7 @@ class VDQN_Agent(RL_Agent):
                 q_values = v_table[
                     np.arange(len(v_table)), batched_actions.long().flatten()
                 ]
-                with torch.no_grad():
+                with torch.inference_mode():
                     q_next = self.Q_model(batched_next_states)  # .detach().max(-1)[0]
                     q_next = q_next.detach().max(-1)[0]
                     q_next = q_next.reshape_as(batched_rewards)

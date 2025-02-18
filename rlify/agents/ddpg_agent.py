@@ -142,7 +142,9 @@ class DDPG_Agent(DQN_Agent):
         for p in self.target_Q_mle_model.parameters():
             p.requires_grad = False
 
-        self.q_mle_optimizer = optim.Adam(self.Q_mle_model.parameters(), lr=self.lr)
+        self.q_mle_optimizer = self.optimizer_class(
+            self.Q_mle_model.parameters(), lr=self.lr
+        )
         return [
             *q_models,
             self.Q_mle_model,
@@ -309,7 +311,7 @@ class DDPG_Agent(DQN_Agent):
         return actions_values
 
     def act(self, observations: np.array, num_obs: int = 1):
-        with torch.no_grad():
+        with torch.inference_mode():
             actor_acts = self.actor_action(observations, num_obs)
             if self.possible_actions != "continuous":
                 actor_acts = actor_acts.round()
@@ -357,7 +359,7 @@ class DDPG_Agent(DQN_Agent):
                 q_values = self.get_actor_action_value(
                     batched_states, batched_actions, use_target=False
                 )
-                with torch.no_grad():
+                with torch.inference_mode():
                     actor_next_action = self.actor_action(
                         batched_next_states,
                         real_batch_size,
