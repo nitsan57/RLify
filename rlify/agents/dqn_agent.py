@@ -31,6 +31,7 @@ class DQN_Agent(VDQN_Agent):
         experience_class: object = ExperienceReplay,
         max_mem_size: int = int(10e6),
         discount_factor: float = 0.99,
+        normlize_obs: str = "auto",
         reward_normalization=True,
         tensorboard_dir: str = "./tensorboard",
         dataloader_workers: int = 0,
@@ -95,6 +96,7 @@ class DQN_Agent(VDQN_Agent):
             device=device,
             experience_class=experience_class,
             discount_factor=discount_factor,
+            normlize_obs=normlize_obs,
             reward_normalization=reward_normalization,
             tensorboard_dir=tensorboard_dir,
             dataloader_workers=dataloader_workers,
@@ -104,10 +106,10 @@ class DQN_Agent(VDQN_Agent):
         """
         Initializes the Q and target Q networks.
         """
-        super().setup_models()
+        q_model = super().setup_models()
         self.target_Q_model = copy.deepcopy(self.Q_model).to(self.device)
         DQN_Agent.hard_target_update(self, manual_update=True)
-        return [self.Q_model, self.target_Q_model]
+        return [*q_model, self.target_Q_model]
 
     @staticmethod
     def get_models_input_output_shape(obs_space, action_space):
@@ -246,7 +248,7 @@ class DQN_Agent(VDQN_Agent):
                     np.arange(len(v_table)), batched_actions.long().flatten()
                 ]
                 q_values = q_values.reshape_as(batched_actions)
-                with torch.no_grad():
+                with torch.inference_mode():
                     q_next = (
                         self.target_Q_model(batched_next_states).detach().max(-1)[0]
                     )

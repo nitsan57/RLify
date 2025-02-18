@@ -6,9 +6,11 @@ from rlify.agents.explorers import Explorer, RandomExplorer
 import numpy as np
 import functools
 import operator
+
 from .agent_utils import TrainMetrics, calc_returns
 from rlify.environments.env_utils import ParallelEnv
 import torch
+
 from .agent_utils import ObsShapeWraper, ObsWrapper
 from rlify.agents.experience_replay import ExperienceReplay
 import uuid
@@ -18,7 +20,6 @@ from torch.utils.tensorboard import SummaryWriter
 from munch import Munch
 import os
 import pygame
-
 
 logger = logging.getLogger(__name__)
 import datetime
@@ -46,10 +47,10 @@ class RL_Agent(ABC):
         experience_class: object = ExperienceReplay,
         max_mem_size: int = int(10e6),
         discount_factor: float = 0.99,
+        normlize_obs: str = None,
         reward_normalization=True,
         tensorboard_dir: str = "./tensorboard",
         dataloader_workers: int = 0,
-        # accumulate_gradients_per_epoch: bool = None, # future api
     ) -> None:
         """
 
@@ -65,12 +66,11 @@ class RL_Agent(ABC):
             experience_class (object, optional): experience replay class. Defaults to ExperienceReplay.
             max_mem_size (int, optional): maximum size of the experience replay buffer. Defaults to 10e6.
             discount_factor (float, optional): discount factor. Defaults to 0.99.
+            normlize_obs (str, optional): normalization method for the observations. Defaults to None. valid values are [auto, None]
             reward_normalization (bool, optional): whether to normalize the rewards by maximum absolut value. Defaults to True.
             tensorboard_dir (str, optional): tensorboard directory. Defaults to './tensorboard'.
             dataloader_workers (int, optional): number of workers for the dataloader. Defaults to 0.
-            accumulate_gradients_per_epoch (bool, optional): whether to update the model every epoch or every batch. Defaults to None \
-                - when None is set in reccurent models it will be set to True, and in normal models it will be set to False
-            
+
         """
         super(RL_Agent, self).__init__()
         self.dataloader_workers = dataloader_workers
@@ -86,7 +86,6 @@ class RL_Agent(ABC):
         self.obs_std = None
         self.reward_normalization = reward_normalization
         self.max_return = 0
-
         self.obs_space = obs_space
         self.obs_shape = ObsShapeWraper(obs_space)  # obs_shape
         self.discount_factor = discount_factor
@@ -95,16 +94,46 @@ class RL_Agent(ABC):
         self.device = (
             device if device is not None else utils.init_torch()
         )  # default goes to cuda -> cpu' or enter manualy
-
+        self.optimizer_class = torch.optim.Adam
         self.lr = lr
         self.define_action_space(action_space)
         models = self.setup_models()
+        for m in models:
+            m = torch.compile(m)
+
         self.validate_models(models)
         if self.contains_reccurent_nn() and self.accumulate_gradients_per_epoch is None:
-            self.accumulate_gradients_per_epoch = True
+            self.accumulate_gradients_per_epoch = False
+
+        assert normlize_obs in [
+            "auto",
+            None,
+        ], 'normlize_obs should be "auto" or None currently'
+        if normlize_obs == "auto":
+            self.register_normalizer(models)
+
         self.experience = experience_class(max_mem_size, self.obs_shape, self.n_actions)
 
         self.metrics = TrainMetrics()
+
+    def register_normalizer(self, models: list[torch.nn.Module]):
+        def normlizer(self, obs):
+            normlized_obs = {}
+            assert len(obs) == 1
+            obs = obs[0]
+            for k in obs.keys():
+                positive = obs[k] >= 0
+                normlized_obs[k] = obs[k].clone()
+                normlized_obs[k][positive] = (
+                    0.5 * torch.nn.functional.tanh(torch.log(obs[k][positive])) + 0.5
+                ).clone()
+                normlized_obs[k][~positive] = (
+                    -0.5 * torch.nn.functional.tanh(torch.log(-obs[k][~positive])) - 0.5
+                ).clone()
+            return ObsWrapper(normlized_obs)
+
+        for m in models:
+            m.register_forward_pre_hook(normlizer)
 
     def get_train_batch_size(self):
         """
@@ -116,10 +145,10 @@ class RL_Agent(ABC):
         return self.batch_size
 
     def contains_reccurent_nn(self):
-        return self.rnn_models
+        return self.containes_rnn_models
 
     def validate_models(self, models):
-        self.rnn_models = False
+        self.containes_rnn_models = False
         assert (
             models is not None
         ), "setup_models should return a list of models, or empty list"
@@ -130,7 +159,7 @@ class RL_Agent(ABC):
             assert (
                 np.array(is_rnn_list) == is_rnn_list[0]
             ).all(), "all models should have the same rnn status - either all reccurent, or either all not reccurent"
-            self.rnn_models = is_rnn_list[0]
+            self.containes_rnn_models = is_rnn_list[0]
 
     def init_tb_writer(self, tensorboard_dir: str = None):
         """
@@ -226,7 +255,7 @@ class RL_Agent(ABC):
 
     @staticmethod
     def read_nn_properties(ckpt_fname):
-        checkpoint = torch.load(ckpt_fname, map_location="cpu")
+        checkpoint = torch.load(ckpt_fname, map_location="cpu", weights_only=False)
         relevant_keys = []
         for k in checkpoint:
             if isinstance(checkpoint[k], dict) and "approximated_args" in checkpoint[k]:
@@ -289,7 +318,7 @@ class RL_Agent(ABC):
         Loads the agent from a file.
         Returns: a dictionary containing the agent's state.
         """
-        checkpoint = torch.load(f_name, map_location=self.device)
+        checkpoint = torch.load(f_name, map_location=self.device, weights_only=False)
         self.action_space = checkpoint["action_space"]
         self.obs_space = checkpoint["obs_space"]
         self.obs_shape = checkpoint["obs_shape"]
@@ -546,13 +575,6 @@ class RL_Agent(ABC):
             The highest probabilty action to be taken in a detrministic way
         """
         raise NotImplementedError
-
-    def norm_obs(self, observations):
-        """
-        Normalizes the observations according to the pre given normalization parameters [future api - currently not availble]
-        """
-        return observations
-        return (observations - self.norm_params["mean"]) / self.norm_params["std"]
 
     def pre_process_obs_for_act(self, observations: ObsWrapper | dict, num_obs: int):
         """

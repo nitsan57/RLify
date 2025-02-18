@@ -140,7 +140,7 @@ class ObsWrapper:
 
     def __init__(
         self,
-        data: (dict, np.array, torch.tensor) = None,
+        data: [dict, np.array, torch.Tensor] = None,
         keep_dims: bool = True,
         tensors: bool = False,
     ):
@@ -210,6 +210,9 @@ class ObsWrapper:
                 ), "cant init a dict with a value with different len"
 
         self.update_shape()
+
+    def __copy__(self):
+        return ObsWrapper(self)
 
     def update_shape(self):
         """
@@ -444,6 +447,9 @@ class ObsWrapper:
             adds key by key using <+> pointwise operator
         """
         temp_dict = {}
+        if np.issubdtype(type(other), np.number):
+            num = other
+            other = defaultdict(lambda: float(num))
         for k, v in self.data.items():
             temp_dict[k] = v + other[k]
         return ObsWrapper(temp_dict, keep_dims=True)
@@ -477,7 +483,7 @@ class ObsWrapper:
             divides key by key using </> pointwise operator
         """
         temp_dict = {}
-        if np.issubdtype(int, np.number):
+        if np.issubdtype(type(other), np.number):
             num = other
             other = defaultdict(lambda: float(num))
         for k, v in self.data.items():
@@ -541,6 +547,15 @@ class ObsWrapper:
                 temp_dict[k] = v.detach().clone().to(device).float()
 
         return ObsWrapper(temp_dict, keep_dims=True, tensors=True)
+
+    def abs(self):
+        """
+        Returns the absolute value of the object
+        """
+        temp_dict = {}
+        for k, v in self.data.items():
+            temp_dict[k] = v.abs()
+        return ObsWrapper(temp_dict, keep_dims=True)
 
     def to(self, device, non_blocking=False):
         """
@@ -755,7 +770,7 @@ class LambdaDataset(Dataset):
             obs_collection = [obs[idx] for obs in self.obs_collection]
             tensor_collection = [tensor[idx] for tensor in self.tensor_collection]
             dones = self.dones[idx]
-            loss_flag = self.loss_flag[idx].squeeze(0)
+            loss_flag = self.loss_flag[idx]
 
         return (
             obs_collection,

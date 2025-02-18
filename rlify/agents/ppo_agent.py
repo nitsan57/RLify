@@ -1,13 +1,11 @@
-import logging
 import torch
 import torch.nn as nn
 import numpy as np
-from .agent_utils import ObsWrapper, calc_gaes, LambdaDataset, IData, LambdaData
+from .agent_utils import calc_gaes, LambdaDataset, IData, LambdaData
 from rlify.agents.experience_replay import ForgettingExperienceReplay
 from .action_spaces_utils import MCAW, MDA
 from .explorers import Explorer, RandomExplorer
 from .drl_agent import RL_Agent
-import adabelief_pytorch
 from rlify.utils import HiddenPrints
 import gc
 from torch.utils.data import Dataset
@@ -133,10 +131,10 @@ class PPO_Agent(RL_Agent):
         experience_class: object = ForgettingExperienceReplay,
         max_mem_size: int = int(10e5),
         discount_factor: float = 0.99,
+        normlize_obs: str = "auto",
         reward_normalization=True,
         tensorboard_dir: str = "./tensorboard",
         dataloader_workers: int = 0,
-        accumulate_gradients_per_epoch: bool = None,
     ):
         """
         Example::
@@ -190,6 +188,7 @@ class PPO_Agent(RL_Agent):
             experience_class=experience_class,
             max_mem_size=max_mem_size,
             discount_factor=discount_factor,
+            normlize_obs=normlize_obs,
             reward_normalization=reward_normalization,
             tensorboard_dir=tensorboard_dir,
             dataloader_workers=dataloader_workers,
@@ -242,42 +241,43 @@ class PPO_Agent(RL_Agent):
             },
         }
 
+    def actor_model_mda(self, x):
+        x = self.policy_nn(x).reshape(-1, self.possible_actions)
+        return MDA(
+            self.action_space.start,
+            self.possible_actions,
+            self.n_actions,
+            x,
+        )
+
+    def actor_model_mcaw(self, x):
+        x = self.policy_nn(x).reshape(-1, 2 * self.n_actions)
+        return MCAW(
+            self.action_space.low,
+            self.action_space.high,
+            x,
+        )
+
     def setup_models(self):
         # self.exp_sigma = self.GSDE()
         # self.exp_sigma.to(self.device)
         self.policy_nn = self.policy_nn.to(self.device)
         self.critic_nn = self.critic_nn.to(self.device)
         if np.issubdtype(self.action_dtype, np.integer):
-            self.actor_model = lambda x: MDA(
-                self.action_space.start,
-                self.possible_actions,
-                self.n_actions,
-                self.policy_nn(x).reshape(-1, self.possible_actions),
-            )
+            self.actor_model = self.actor_model_mda
         else:
-            self.actor_model = lambda x: MCAW(
-                self.action_space.low,
-                self.action_space.high,
-                self.policy_nn(x).reshape(-1, 2 * self.n_actions),
-            )
+            self.actor_model = self.actor_model_mcaw
 
-        weight = list(self.policy_nn.children())[-1].weight.data
-        bias = list(self.policy_nn.children())[-1].bias.data
-        list(self.policy_nn.children())[-1].weight.data = (weight) * 0.01
-        list(self.policy_nn.children())[-1].bias.data = (bias) * 0.01
+        self.actor_optimizer = self.optimizer_class(
+            self.policy_nn.parameters(),
+            lr=self.lr,
+        )
 
-        with HiddenPrints():
-            self.actor_optimizer = adabelief_pytorch.AdaBelief(
-                self.policy_nn.parameters(),
-                self.lr,
-                amsgrad=False,
-            )
-            self.critic_optimizer = adabelief_pytorch.AdaBelief(
-                self.critic_nn.parameters(),
-                self.lr,
-                amsgrad=False,
-            )
-            return [self.policy_nn, self.critic_nn]
+        self.critic_optimizer = self.optimizer_class(
+            self.critic_nn.parameters(),
+            lr=self.lr,
+        )
+        return [self.policy_nn, self.critic_nn]
 
     def save_agent(self, f_name) -> dict:
         save_dict = super().save_agent(f_name)
@@ -312,7 +312,7 @@ class PPO_Agent(RL_Agent):
     def best_act_discrete(self, observations, num_obs=1):
         states = self.pre_process_obs_for_act(observations, num_obs)
 
-        with torch.no_grad():
+        with torch.inference_mode():
             actions_dist = self.actor_model(states)
         selected_actions = torch.argmax(actions_dist.probs, 1).detach().cpu().numpy()
         return self.return_correct_actions_dim(selected_actions, num_obs)
@@ -320,20 +320,18 @@ class PPO_Agent(RL_Agent):
     def best_act_cont(self, observations, num_obs=1):
         states = self.pre_process_obs_for_act(observations, num_obs)
 
-        with torch.no_grad():
+        with torch.inference_mode():
             actions_dist = self.actor_model(states)
-
-        selected_actions = actions_dist.loc.detach().cpu().numpy()
+            selected_actions = actions_dist.loc.cpu().numpy()
         return self.return_correct_actions_dim(selected_actions, num_obs)
 
     def act(self, observations, num_obs=1):
         states = self.pre_process_obs_for_act(observations, num_obs)
 
-        with torch.no_grad():
+        with torch.inference_mode():
             actions_dist = self.actor_model(states)
             action = actions_dist.sample()
-
-        selected_actions = action.detach().cpu().numpy()
+            selected_actions = action.cpu().numpy()
         return self.return_correct_actions_dim(selected_actions, num_obs)
 
     def get_trajectories_data(self):
@@ -358,7 +356,7 @@ class PPO_Agent(RL_Agent):
         training = self.training
 
         self.set_eval_mode()
-        with torch.no_grad():
+        with torch.inference_mode():
 
             for mb in dl:
                 (
@@ -376,34 +374,24 @@ class PPO_Agent(RL_Agent):
                 dist = self.actor_model(batched_states)
                 logit = dist.log_prob(batched_actions.reshape(-1, self.n_actions))
                 logit = logit.reshape(((b, -1, self.n_actions)))
-                logits.append(logit.to("cpu"))
-                values.append(self.critic_nn(batched_states).to("cpu"))
+                logits.append(logit)
+                values.append(self.critic_nn(batched_states))
 
         if training:
             self.set_train_mode()
-        batched_loss_flags = torch.cat(batched_loss_flags_list, -1).flatten()
+            batched_loss_flags = torch.cat(batched_loss_flags_list).flatten()
+
         if self.contains_reccurent_nn():
-            return (
-                torch.cat(logits, 1)
-                .reshape(-1, self.n_actions)
-                .detach()
-                .cpu()
-                .numpy()[batched_loss_flags],
-                torch.cat(values, 1)
-                .flatten()
-                .detach()
-                .cpu()
-                .numpy()[batched_loss_flags],
-            )
+            logits = torch.cat(logits, 1)
+            values = torch.cat(values, 1)
         else:
-            return (
-                torch.cat(logits)
-                .reshape(-1, self.n_actions)
-                .detach()
-                .cpu()
-                .numpy()[batched_loss_flags],
-                torch.cat(values).flatten().detach().cpu().numpy()[batched_loss_flags],
-            )
+            logits = torch.cat(logits)
+            values = torch.cat(values)
+
+        return (
+            logits.reshape(-1, self.n_actions)[batched_loss_flags].cpu().numpy(),
+            values.flatten()[batched_loss_flags].cpu().numpy(),
+        )
 
     def _get_ppo_experiences(self, num_episodes=None):
         """
