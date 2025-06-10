@@ -354,7 +354,7 @@ class DDPG_Agent(DQN_Agent):
                 batched_returns = batched_returns.to(self.device, non_blocking=True)
                 batched_rewards = batched_rewards.to(self.device, non_blocking=True)
                 batched_actions = batched_actions.to(self.device, non_blocking=True)
-                batched_dones = batched_dones.to(self.device)
+                batched_dones = batched_dones.to(self.device, non_blocking=True)
                 real_batch_size = batched_states.len
                 q_values = self.get_actor_action_value(
                     batched_states, batched_actions, use_target=False
@@ -411,9 +411,9 @@ class DDPG_Agent(DQN_Agent):
                     actor_loss = actor_loss / len(dataloader)
                     actor_loss.backward()
 
-                self.metrics.add("q_loss", loss.item())
-                self.metrics.add("actor_loss", actor_loss.item())
-                self.metrics.add("q_magnitude", q_values.mean().item())
+                self.metrics.add("q_loss", loss)
+                self.metrics.add("actor_loss", actor_loss)
+                self.metrics.add("q_magnitude", q_values.mean())
 
             if self.accumulate_gradients_per_epoch:
                 self.q_mle_optimizer.step()

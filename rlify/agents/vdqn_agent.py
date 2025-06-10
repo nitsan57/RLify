@@ -262,9 +262,6 @@ class VDQN_Agent(RL_Agent):
         self.optimizer.load_state_dict(checkpoint["optimizer"])
         return checkpoint
 
-    def contains_reccurent_nn(self):
-        return self.Q_model.is_rnn
-
     def act_base(self, observations: np.array, num_obs: int = 1) -> torch.Tensor:
         """
         Returns the Q values for the given observations.
@@ -352,6 +349,7 @@ class VDQN_Agent(RL_Agent):
                     batched_next_states,
                     batched_loss_flags,
                 ) = mb
+                batched_states = batched_states.to(self.device, non_blocking=True)
                 batched_next_states = batched_next_states.to(
                     self.device, non_blocking=True
                 )
@@ -365,7 +363,6 @@ class VDQN_Agent(RL_Agent):
                     self.device, non_blocking=True
                 ).squeeze()
                 batched_dones = batched_dones.to(self.device, non_blocking=True)
-                batched_states = batched_states.to(self.device)
                 v_table = self.Q_model(batched_states)
                 # flat in case of RNN (b*seq_len, ...)
                 v_table = v_table.reshape(-1, self.possible_actions)
@@ -399,8 +396,8 @@ class VDQN_Agent(RL_Agent):
                     loss = loss / len(dataloader)
                     loss.backward()
 
-                self.metrics.add("q_loss", loss.item())
-                self.metrics.add("q_magnitude", q_values.mean().item())
+                self.metrics.add("q_loss", loss)
+                self.metrics.add("q_magnitude", q_values.mean())
 
             if self.accumulate_gradients_per_epoch:
                 self.optimizer.step()
