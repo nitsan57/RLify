@@ -225,20 +225,21 @@ class DQN_Agent(VDQN_Agent):
                     batched_next_states,
                     batched_loss_flags,
                 ) = mb
+                batched_states = batched_states.to(self.device, non_blocking=True)
+                batched_actions = batched_actions.to(
+                    self.device, non_blocking=True
+                ).squeeze()
                 batched_next_states = batched_next_states.to(
                     self.device, non_blocking=True
                 )
-                batched_states = batched_states.to(self.device, non_blocking=True)
                 batched_not_terminated = 1 - batched_dones * (1 - batched_truncated)
                 batched_not_terminated = batched_not_terminated.to(
                     self.device, non_blocking=True
                 )
                 batched_returns = batched_returns.to(self.device, non_blocking=True)
                 batched_rewards = batched_rewards.to(self.device, non_blocking=True)
-                batched_actions = batched_actions.to(
-                    self.device, non_blocking=True
-                ).squeeze()
-                batched_dones = batched_dones.to(self.device)
+
+                batched_dones = batched_dones.to(self.device, non_blocking=True)
                 batched_terminated = 1 - batched_not_terminated
                 v_table = self.Q_model(batched_states).reshape(
                     -1, self.possible_actions
@@ -277,8 +278,8 @@ class DQN_Agent(VDQN_Agent):
                     loss = loss / len(dataloader)
                     loss.backward()
 
-                self.metrics.add("q_loss", loss.item())
-                self.metrics.add("q_magnitude", q_values.mean().item())
+                self.metrics.add("q_loss", loss)
+                self.metrics.add("q_magnitude", q_values.mean())
             if self.accumulate_gradients_per_epoch:
                 self.optimizer.step()
                 self.update_target()

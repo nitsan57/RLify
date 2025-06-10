@@ -542,9 +542,9 @@ class ObsWrapper:
         temp_dict = {}
         for k, v in self.data.items():
             if type(v) == np.ndarray:
-                temp_dict[k] = torch.from_numpy(v).float().to(device)
+                temp_dict[k] = torch.from_numpy(v).float().to(device, non_blocking=True)
             elif type(v) == torch.Tensor:
-                temp_dict[k] = v.detach().clone().to(device).float()
+                temp_dict[k] = v.detach().clone().to(device, non_blocking=True).float()
 
         return ObsWrapper(temp_dict, keep_dims=True, tensors=True)
 
@@ -812,14 +812,14 @@ class TrainMetrics:
         self.metrics = defaultdict(list)
         self.epoch_metrics = defaultdict(list)
 
-    def add(self, metric_name, value):
+    def add(self, metric_name, value: torch.Tensor):
         """
         Adds a metric to the metrics.
         Args:
             metric_name: The name of the metric.
             value: The value of the metric.
         """
-        self.epoch_metrics[metric_name].append(value)
+        self.epoch_metrics[metric_name].append(value.detach())
 
     def on_epoch_end(self):
         """
@@ -829,9 +829,8 @@ class TrainMetrics:
             value: The value of the metric.
         """
         for k in self.epoch_metrics.keys():
-            self.metrics[k].append(
-                sum(self.epoch_metrics[k]) / len(self.epoch_metrics[k])
-            )
+            result = torch.tensor(self.epoch_metrics[k]).mean().item()
+            self.metrics[k].append(result)
         self.epoch_metrics = defaultdict(list)
 
     def get_metrcis_df(self):

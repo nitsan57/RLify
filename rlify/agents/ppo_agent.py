@@ -30,7 +30,7 @@ class PPODataset(Dataset):
         """
 
         Args:
-            states (np.ndarray): The states.
+            states (np.ndarray): The states.f
             actions (np.ndarray): The actions.
             dones (np.ndarray): The dones.
             returns (np.ndarray): The returns.
@@ -369,8 +369,8 @@ class PPO_Agent(RL_Agent):
                 b = batched_dones.shape[0]
                 batched_states = obs_collection[0]
                 batched_actions = tensor_collection[0]
+                batched_states = batched_states.to(self.device, non_blocking=True)
                 batched_actions = batched_actions.to(self.device, non_blocking=True)
-                batched_states = batched_states.to(self.device)
                 dist = self.actor_model(batched_states)
                 logit = dist.log_prob(batched_actions.reshape(-1, self.n_actions))
                 logit = logit.reshape(((b, -1, self.n_actions)))
@@ -454,14 +454,14 @@ class PPO_Agent(RL_Agent):
                     batched_logits,
                     batched_loss_flags,
                 ) = mb
+                batched_states = batched_states.to(self.device, non_blocking=True)
                 batched_returns = batched_returns.to(self.device, non_blocking=True)
                 batched_advantages = batched_advantages.to(
                     self.device, non_blocking=True
                 )
                 old_log_probs = batched_logits.to(self.device, non_blocking=True)
                 batched_actions = batched_actions.to(self.device, non_blocking=True)
-                batched_states = batched_states.to(self.device)
-                batched_dones = batched_dones.to(self.device)
+                batched_dones = batched_dones.to(self.device, non_blocking=True)
                 dist = self.actor_model(batched_states)
                 critic_values = self.critic_nn(batched_states)
                 new_log_probs = dist.log_prob(
@@ -490,12 +490,10 @@ class PPO_Agent(RL_Agent):
                     self.entropy_coeff, entropy, batched_loss_flags
                 )
 
-                kl_div = (
-                    -(ratio * log_ratio - (ratio - 1))[batched_loss_flags.flatten()]
-                    .mean()
-                    .item()
-                )
-                if np.abs(kl_div) > self.kl_div_thresh:
+                kl_div = -(ratio * log_ratio - (ratio - 1))[
+                    batched_loss_flags.flatten()
+                ].mean()
+                if kl_div.abs() > self.kl_div_thresh:
                     kl_div_bool = True
                     if e == 0 and b == 0:
                         raise Exception(
@@ -537,8 +535,8 @@ class PPO_Agent(RL_Agent):
                     critic_loss.backward()
 
                 self.metrics.add("kl_div", kl_div)
-                self.metrics.add("critic_loss", critic_loss.item())
-                self.metrics.add("actor_loss", actor_loss.item())
+                self.metrics.add("critic_loss", critic_loss)
+                self.metrics.add("actor_loss", actor_loss)
 
             if kl_div_bool:
                 break

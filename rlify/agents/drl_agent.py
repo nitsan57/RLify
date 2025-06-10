@@ -47,10 +47,10 @@ class RL_Agent(ABC):
         experience_class: object = ExperienceReplay,
         max_mem_size: int = int(10e6),
         discount_factor: float = 0.99,
-        normlize_obs: str = None,
+        normlize_obs: str = "auto",
         reward_normalization=True,
         tensorboard_dir: str = "./tensorboard",
-        dataloader_workers: int = 0,
+        dataloader_workers: int = 2,
     ) -> None:
         """
 
@@ -98,9 +98,11 @@ class RL_Agent(ABC):
         self.lr = lr
         self.define_action_space(action_space)
         models = self.setup_models()
-        for m in models:
-            m = torch.compile(m)
-
+        # compile models
+        # for attr in self._list_models_attr():
+        #     m = getattr(self, attr)
+        #     m = torch.compile(m, mode="max-autotune-no-cudagraphs")
+        #     setattr(self, attr, m)
         self.validate_models(models)
         if self.contains_reccurent_nn() and self.accumulate_gradients_per_epoch is None:
             self.accumulate_gradients_per_epoch = False
@@ -146,6 +148,11 @@ class RL_Agent(ABC):
 
     def contains_reccurent_nn(self):
         return self.containes_rnn_models
+
+    def _list_models_attr(self):
+        for attr in self.__dict__:
+            if isinstance(getattr(self, attr), torch.nn.Module):
+                yield attr
 
     def validate_models(self, models):
         self.containes_rnn_models = False
@@ -276,16 +283,7 @@ class RL_Agent(ABC):
             dictionary: dictionary containing the model's state
 
         """
-
-        default_module_args = (
-            torch.nn.Module().__dict__.keys() | torch.nn.Module.__dict__.keys()
-        )
-        class_type = str(model.__class__)
         return {
-            "approximated_args": {
-                k: v for k, v in model.__dict__.items() if k not in default_module_args
-            },
-            "class_type": class_type,
             "state_dict": model.state_dict(),
         }
 
