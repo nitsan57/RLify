@@ -4,6 +4,7 @@ import gymnasium as gym
 import gc
 import copy
 import numpy as np
+from numpy.random import seed
 
 
 def worker(env, conn):
@@ -15,6 +16,8 @@ def worker(env, conn):
     """
     proc_running = True
     done = False
+
+    seed()
 
     while proc_running:
         if conn.poll(30):

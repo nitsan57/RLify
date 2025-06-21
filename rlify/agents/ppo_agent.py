@@ -10,6 +10,7 @@ from rlify.utils import HiddenPrints
 import gc
 from torch.utils.data import Dataset
 import gymnasium as gym
+from torch.distributions import kl_divergence
 
 
 class PPODataset(Dataset):
@@ -468,8 +469,8 @@ class PPO_Agent(RL_Agent):
                     batched_actions.reshape(-1, self.n_actions)
                 )
                 old_log_probs = old_log_probs.reshape_as(new_log_probs)
-                log_ratio = torch.clamp(new_log_probs, np.log(1e-3), 0.0) - torch.clamp(
-                    old_log_probs, np.log(1e-3), 0.0
+                log_ratio = torch.clamp(new_log_probs, np.log(1e-3)) - torch.clamp(
+                    old_log_probs, np.log(1e-3)
                 )
                 ratio = log_ratio.exp().mean(-1)
                 log_ratio = ratio.log()
@@ -493,6 +494,7 @@ class PPO_Agent(RL_Agent):
                 kl_div = -(ratio * log_ratio - (ratio - 1))[
                     batched_loss_flags.flatten()
                 ].mean()
+
                 if kl_div.abs() > self.kl_div_thresh:
                     kl_div_bool = True
                     if e == 0 and b == 0:
