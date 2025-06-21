@@ -60,7 +60,9 @@ class MCAW:
         res = []
         for i, m in enumerate(self.models):
             res.append(m.log_prob(actions[:, i]))
-        return torch.stack(res, -1)
+        res = torch.stack(res, -1)
+        res[res.isnan()] = torch.log(torch.tensor(1e-6, device=res.device))
+        return res
 
     @property
     def loc(self):
@@ -109,10 +111,10 @@ class CAW(Normal):
         bias = low + coeff
 
         loc = torch.tanh(loc) * coeff + bias
-        scale = torch.nn.functional.sigmoid(scale)
+        scale_coeff = (high - low) * 0.1
+        scale = (torch.nn.functional.sigmoid(scale) * (scale_coeff)).clip(1e-3)
 
         super().__init__(loc, scale)
-        # self.sample_activation = torch.nn.Identity() #torch.nn.Tanh() #torch.nn.Sigmoid()
 
     def sample(self, sample_shape=torch.Size()):
         """
@@ -122,14 +124,7 @@ class CAW(Normal):
             a tensor of shape (b, sample_shape)
         """
         sample = super().sample(sample_shape)
-        # self.sample_activation(sample)
         return torch.clamp(sample, self.low, self.high)
-
-    # @property
-    # def loc(self):
-    #     return self.sample_activation(self.loc)
-    # def get_loc(self):
-    #     return self.sample_activation(self.loc)
 
 
 class MDA:
@@ -187,7 +182,10 @@ class MDA:
         res = []
         for i, m in enumerate(self.models):
             res.append(m.log_prob(actions[:, i]))
-        return torch.stack(res, -1)
+        res = torch.stack(res, -1)
+        # replace NaN with a small value
+        res[res.isnan()] = torch.log(torch.tensor(1e-6, device=res.device))
+        return res
 
     @property
     def probs(self):
