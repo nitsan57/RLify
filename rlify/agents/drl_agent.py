@@ -260,22 +260,11 @@ class RL_Agent(ABC):
         if hasattr(self, "writer"):
             self.writer.close()
 
-    @staticmethod
-    def read_nn_properties(ckpt_fname):
-        checkpoint = torch.load(ckpt_fname, map_location="cpu", weights_only=False)
-        relevant_keys = []
-        for k in checkpoint:
-            if isinstance(checkpoint[k], dict) and "approximated_args" in checkpoint[k]:
-                relevant_keys.append(k)
-        return pd.DataFrame(checkpoint)["critic_nn"][
-            ["approximated_args", "class_type"]
-        ].to_dict()
-
     def _generate_nn_save_key(self, model: torch.nn.Module):
         """
 
         Generates a key for saving the model
-        the key includes the approximated args, class type - for reproducibility and the state dict of the model
+        the key includes the state dict of the model
         Args:
             model: the model to save
 
@@ -470,7 +459,7 @@ class RL_Agent(ABC):
 
             collect_info = [self.num_parallel_envs, num_steps_collected]
             curr_training_steps += num_steps_collected
-            desciption = f"episode {ep_number}, curr_mean_R:{np.round(mean_rewrad, 2):08}, best_mean_R:{np.round(best_agent_score,2)}, total_steps:{curr_training_steps}"
+            desciption = f"episode {ep_number}, curr_mean_R:{np.round(mean_rewrad, 2):08}, best_mean_R:{np.round(best_agent_score,2)}, total_steps:{curr_training_steps}, 'exploration_eps':{self.explorer.exploration_epsilon:.2f}"
             pbar.set_description(desciption)
 
             pbar.update(collect_info[to_update_idx])

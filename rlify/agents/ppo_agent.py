@@ -6,11 +6,8 @@ from rlify.agents.experience_replay import ForgettingExperienceReplay
 from .action_spaces_utils import MCAW, MDA
 from .explorers import Explorer, RandomExplorer
 from .drl_agent import RL_Agent
-from rlify.utils import HiddenPrints
-import gc
 from torch.utils.data import Dataset
 import gymnasium as gym
-from torch.distributions import kl_divergence
 
 
 class PPODataset(Dataset):
@@ -123,7 +120,7 @@ class PPO_Agent(RL_Agent):
         batch_size: int = 1024,
         entropy_coeff: float = 0.1,
         kl_div_thresh: float = 0.03,
-        clip_param: float = 0.1,
+        clip_param: float = 0.2,
         explorer: Explorer = RandomExplorer(0, 0, 0),
         num_parallel_envs: int = 4,
         num_epochs_per_update: int = 10,
@@ -196,6 +193,7 @@ class PPO_Agent(RL_Agent):
         )
 
         self.kl_div_thresh = kl_div_thresh
+        self.kl_div_target = 1000
         self.clip_param = clip_param
         self.optimization_step = 0
         self.losses = []
@@ -315,7 +313,7 @@ class PPO_Agent(RL_Agent):
 
         with torch.inference_mode():
             actions_dist = self.actor_model(states)
-        selected_actions = torch.argmax(actions_dist.probs, 1).detach().cpu().numpy()
+            selected_actions = torch.argmax(actions_dist.probs, 1).cpu().numpy()
         return self.return_correct_actions_dim(selected_actions, num_obs)
 
     def best_act_cont(self, observations, num_obs=1):
@@ -491,9 +489,9 @@ class PPO_Agent(RL_Agent):
                     self.entropy_coeff, entropy, batched_loss_flags
                 )
 
-                kl_div = -(ratio * log_ratio - (ratio - 1))[
-                    batched_loss_flags.flatten()
-                ].mean()
+                kl_div = (
+                    (old_log_probs.exp() * (old_log_probs - new_log_probs))
+                ).mean()
 
                 if kl_div.abs() > self.kl_div_thresh:
                     kl_div_bool = True
@@ -504,7 +502,6 @@ class PPO_Agent(RL_Agent):
                             kl_div,
                         )
                     break
-
                 critic_loss = self.criterion_using_loss_flag(
                     self.criterion,
                     critic_values,

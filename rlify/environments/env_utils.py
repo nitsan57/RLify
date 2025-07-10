@@ -32,8 +32,6 @@ def worker(env, conn):
             next_state, reward, terminated, truncated, _ = env.step(msg)
             conn.send((next_state, reward, terminated, truncated, _))
             done = terminated or truncated
-            if done:
-                next_state = env.reset()
 
         elif cmd == "reset":
             conn.send(env.reset())

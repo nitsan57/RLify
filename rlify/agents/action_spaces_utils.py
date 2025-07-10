@@ -111,7 +111,7 @@ class CAW(Normal):
         bias = low + coeff
 
         loc = torch.tanh(loc) * coeff + bias
-        scale_coeff = (high - low) * 0.1
+        scale_coeff = high - low
         scale = (torch.nn.functional.sigmoid(scale) * (scale_coeff)).clip(1e-3)
 
         super().__init__(loc, scale)
