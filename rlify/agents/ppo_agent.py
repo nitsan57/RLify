@@ -404,9 +404,10 @@ class PPO_Agent(RL_Agent):
         """
         if num_episodes is None:
             num_episodes = self.num_parallel_envs
-            states, actions, rewards, dones, truncated, next_states = (
-                self.experience.get_last_episodes(num_episodes)
-            )
+        states, actions, rewards, dones, truncated, next_states = (
+            self.experience.get_last_episodes(num_episodes)
+        )
+
         logits, values = self.calc_logits_values(states, actions, dones)
         advantages, returns = calc_gaes(
             rewards,
