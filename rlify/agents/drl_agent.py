@@ -50,7 +50,7 @@ class RL_Agent(ABC):
         normlize_obs: str = "auto",
         reward_normalization=True,
         tensorboard_dir: str = "./tensorboard",
-        dataloader_workers: int = 2,
+        dataloader_workers: int = 0,
     ) -> None:
         """
 
