@@ -14,7 +14,7 @@ class HiddenPrints:
         sys.stdout = self._original_stdout
 
 
-def init_torch(device="cuda"):
+def init_torch(device="cuda", optimize_performance=True):
     """
     Initializes torch device
 
@@ -28,6 +28,10 @@ def init_torch(device="cuda"):
         return device
     torch.backends.cudnn.benchmark = True
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available() and "cuda" in str(device) and optimize_performance:
+        torch.set_float32_matmul_precision("high")
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cuda.matmul.allow_tf32 = True
     return device
 
 

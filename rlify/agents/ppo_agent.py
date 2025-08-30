@@ -258,8 +258,6 @@ class PPO_Agent(RL_Agent):
         )
 
     def setup_models(self):
-        # self.exp_sigma = self.GSDE()
-        # self.exp_sigma.to(self.device)
         self.policy_nn = self.policy_nn.to(self.device)
         self.critic_nn = self.critic_nn.to(self.device)
         if np.issubdtype(self.action_dtype, np.integer):
@@ -442,8 +440,8 @@ class PPO_Agent(RL_Agent):
         )
         for e in range(self.num_epochs_per_update):
             kl_div_bool = False
-            self.actor_optimizer.zero_grad()
-            self.critic_optimizer.zero_grad()
+            self.actor_optimizer.zero_grad(set_to_none=True)
+            self.critic_optimizer.zero_grad(set_to_none=True)
             for b, mb in enumerate(ppo_dataloader):
                 (
                     batched_states,
